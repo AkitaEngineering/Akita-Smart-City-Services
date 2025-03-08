@@ -1,6 +1,6 @@
 # Akita Smart City Services (ASCS)
 
-Akita Smart City Services is a Meshtastic plugin designed to facilitate IoT-based smart city infrastructure by enabling communication between sensors, aggregators, and gateway nodes over a wireless mesh network.
+Akita Smart City Services (ASCS) is a Meshtastic plugin designed to facilitate IoT-based smart city infrastructure by enabling communication between sensors, aggregators, and gateway nodes over a wireless mesh network.
 
 ## Overview
 
