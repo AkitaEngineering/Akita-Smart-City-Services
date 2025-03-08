@@ -90,5 +90,6 @@ This project is licensed under the GNU General Public License v3.0.
 
 Pull requests are welcome. For major changes, please open an issue first to discuss your proposed changes.
 
-
+## Akita Engineering
+This project is developed and maintained by Akita Engineering. We are dedicated to creating innovative solutions for LoRa and Meshtastic networks.
 
