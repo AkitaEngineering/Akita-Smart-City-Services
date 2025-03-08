@@ -1,0 +1,1 @@
+# Akita-Smart-City-Services
