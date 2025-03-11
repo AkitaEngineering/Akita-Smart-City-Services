@@ -1,95 +1,77 @@
 # Akita Smart City Services (ASCS)
 
-Akita Smart City Services (ASCS) is a Meshtastic plugin designed to facilitate IoT-based smart city infrastructure by enabling communication between sensors, aggregators, and gateway nodes over a wireless mesh network.
-
-## Overview
-
-This project implements a smart city service discovery and data aggregation system. Nodes in the network can assume one of three roles:
-- **Sensor**: Captures environmental data (e.g., temperature, humidity) and sends it over the mesh network.
-- **Aggregator**: Receives sensor data and forwards it to a gateway or another aggregator.
-- **Gateway**: Connects the mesh network to external services via MQTT, publishing sensor data to an MQTT broker.
+This Meshtastic plugin, Akita Smart City Services, enables the creation of a distributed smart city IoT network using Meshtastic devices. It supports service discovery, sensor data transmission, and MQTT integration for gateway nodes.
 
 ## Features
 
-- Service discovery: Nodes identify available services and establish communication.
-- MQTT integration: Gateways publish sensor data to an external MQTT broker.
-- Wi-Fi connectivity: Gateways connect to the internet for data transmission.
-- Message encoding/decoding using Protocol Buffers.
-- JSON payloads for MQTT communication.
+* **Service Discovery:** Allows nodes to announce and discover available services within the Meshtastic network.
+* **Sensor Data Transmission:** Facilitates the transmission of sensor data between nodes.
+* **Node Roles:** Supports different node roles:
+    * **Sensor:** Collects and transmits sensor data.
+    * **Aggregator:** Receives and forwards sensor data to other nodes or gateways.
+    * **Gateway:** Bridges the Meshtastic network with an MQTT broker, enabling data transmission to cloud or server infrastructure.
+* **MQTT Integration:** Gateway nodes publish sensor data to an MQTT broker.
+* **Configuration Management:** Uses Arduino `Preferences` library for storing and retrieving configuration parameters.
+* **Protocol Buffers:** Employs Protocol Buffers for efficient and structured message serialization and deserialization.
+* **Service Table Management:** Manages a table of discovered services with timeouts.
+* **WiFi Management:** Gateway nodes manage WiFi connections.
+* **MQTT Reconnection:** Gateway nodes handle MQTT reconnection with a time-based delay.
 
-## Prerequisites
+## Requirements
 
-- Meshtastic-compatible hardware
-- Wi-Fi network
-- MQTT broker
-- Arduino IDE or PlatformIO
-
-## Configuration
-
-Update the following values in `AkitaSmartCityServices.cpp` to match your environment:
-
-```cpp
-#define MQTT_SERVER "your_mqtt_server.com"
-#define MQTT_PORT 1883
-#define MQTT_USER "your_mqtt_user"
-#define MQTT_PASSWORD "your_mqtt_password"
-#define WIFI_SSID "your_wifi_ssid"
-#define WIFI_PASSWORD "your_wifi_password"
-```
-
-Set the node role and service ID in the `loadConfig` function:
-
-```cpp
-myServiceId = 1;  // Unique service ID
-myNodeRole = 0;   // 0: Sensor, 1: Aggregator, 2: Gateway
-```
+* Arduino IDE
+* Meshtastic library
+* PubSubClient library
+* ArduinoJson library
+* Protocol Buffers library
+* WiFi library (for gateway nodes)
+* An MQTT broker (for gateway nodes)
 
 ## Installation
 
-1. Clone the repository.
-2. Open the project in the Arduino IDE or PlatformIO.
-3. Install the required libraries:
-    - Meshtastic
-    - PubSubClient
-    - ArduinoJson
-    - Protocol Buffers for Arduino
-4. Upload the code to your Meshtastic device.
+1.  **Install Libraries:** Install the required libraries through the Arduino Library Manager or by manually downloading and installing them.
+2.  **Create Files:** Create `AkitaSmartCityServices.cpp` and `AkitaSmartCityServices.h` files in your Arduino sketch directory. Copy the provided code into these files.
+3.  **Create Protobuf files:** Create the SmartCity.proto file, and generate the .pb.c and .pb.h files, and include them in your project.
+4.  **Configure:**
+    * Open your Arduino sketch and include the `AkitaSmartCityServices.h` header file.
+    * Create an instance of the `AkitaSmartCityServices` class.
+    * Call the `begin()` method of the class in your `setup()` function.
+    * Call the `update()` method of the class in your `loop()` function.
+    * For gateway nodes, configure the WiFi and MQTT settings using the Arduino Preferences library.
+5.  **Upload:** Upload the sketch to your Meshtastic device.
+
+## Configuration
+
+Configuration parameters are stored using the Arduino `Preferences` library.
+
+* **Service ID:** A unique identifier for the service provided by the node.
+* **Node Role:** Defines the role of the node (sensor, aggregator, gateway).
+* **MQTT Server:** The address of the MQTT broker (gateway nodes).
+* **MQTT Port:** The port number of the MQTT broker (gateway nodes).
+* **MQTT User:** The username for MQTT authentication (gateway nodes).
+* **MQTT Password:** The password for MQTT authentication (gateway nodes).
+* **WiFi SSID:** The SSID of the WiFi network (gateway nodes).
+* **WiFi Password:** The password of the WiFi network (gateway nodes).
 
 ## Usage
 
-- **Sensors** periodically send environmental data.
-- **Aggregators** forward data to gateways or other aggregators.
-- **Gateways** publish the data to an MQTT broker.
+* Nodes will automatically discover each other's services.
+* Sensor nodes will transmit sensor data.
+* Aggregator nodes will forward sensor data.
+* Gateway nodes will publish sensor data to the configured MQTT broker.
+* The service table will be kept up to date, and old services will time out.
 
-To start the service, call:
+## Protocol Buffers
 
-```cpp
-AkitaSmartCityServices.begin();
-```
+The plugin uses Protocol Buffers for message serialization. The `SmartCity.proto` file defines the message structure.
 
-Ensure the `update()` function is called regularly within the main loop:
+## MQTT Topics
 
-```cpp
-void loop() {
-    AkitaSmartCityServices.update();
-}
-```
+Gateway nodes publish sensor data to MQTT topics in the following format:
 
-## Troubleshooting
+smartcity/<service_id>/<node_id>
 
-- Ensure Wi-Fi credentials are correct for gateway nodes.
-- Check MQTT broker settings and topic subscriptions.
-- Confirm hardware compatibility with Meshtastic firmware.
-- Verify node roles and service IDs are unique and correctly set.
-
-## License
-
-This project is licensed under the GNU General Public License v3.0.
 
 ## Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss your proposed changes.
-
-## Akita Engineering
-This project is developed and maintained by Akita Engineering. We are dedicated to creating innovative solutions for LoRa and Meshtastic networks.
-
+Contributions are welcome! Please submit pull requests or bug reports.
