@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package akita_smart_city;
+
+// Main message wrapper for all ASCS communication over Meshtastic.
+// Uses a specific Meshtastic port number (defined in the C++ code).
+message SmartCityPacket {
+  // Identifies the specific type of payload contained.
+  oneof payload {
+    ServiceDiscovery discovery = 1; // For announcing/discovering node roles
+    SensorData sensor_data = 2;     // For transmitting sensor readings
+    // ServiceConfig config = 3;    // Future placeholder for remote configuration
+  }
+}
+
+// Used for nodes to announce their roles and capabilities periodically.
+message ServiceDiscovery {
+  // Defines the primary function of the node in the ASCS network.
+  enum Role {
+    UNKNOWN = 0;    // Default/initial state
+    SENSOR = 1;     // Collects data from physical sensors
+    AGGREGATOR = 2; // Relays data from sensors towards gateways (optional role)
+    GATEWAY = 3;    // Bridges Meshtastic network to external systems (e.g., MQTT)
+  }
+  Role node_role = 1;       // The role this node is configured for.
+  uint32 service_id = 2;    // Optional identifier for specific services/groups/locations.
+  // Add other capabilities if needed, e.g., supported sensor types, firmware version.
+}
+
+// Flexible sensor data structure. Sent by Sensor nodes, potentially relayed
+// by Aggregators, and consumed by Gateways.
+message SensorData {
+  // Optional: Identifier for the specific sensor type or location (e.g., "BME280-Floor1", "ParkingLot-A7").
+  // Useful when a single node has multiple sensors or for context.
+  string sensor_id = 1;
+
+  // Timestamp (Unix epoch seconds) when the reading was taken.
+  // Helps ensure data is correctly ordered and timestamped, independent of mesh delays.
+  uint32 timestamp_utc = 2;
+
+  // Flexible key-value map for sensor readings.
+  // Keys describe the reading (e.g., "temperature_c", "humidity_pct", "pressure_pa", "battery_v", "door_open").
+  // Values are float, suitable for many sensor types. Use specific conventions (e.g., 1.0 for true/open).
+  map<string, float> readings = 3;
+
+  // Optional: Sequence number from the sensor node to help detect missed packets on the receiver side.
+  uint32 sequence_num = 4;
+}
+
+// --- Placeholder for future remote configuration ---
+// message ServiceConfig {
+//   // Define config parameters here if implementing remote config
+//   // e.g., uint32 report_interval_ms = 1;
+//   // e.g., uint32 target_gateway_id = 2; // Node ID of preferred gateway
+//   // e.g., string mqtt_topic_override = 3;
+// }
+
