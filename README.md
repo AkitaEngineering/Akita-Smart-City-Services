@@ -1,6 +1,6 @@
 # Akita Smart City Services (ASCS) - Meshtastic Plugin
 
-**Project Goal:** To provide a robust, scalable, and maintainable Meshtastic plugin for deploying and managing distributed IoT networks essential for smart city services in Akita. ASCS facilitates reliable data collection from sensors, efficient routing through the mesh, and seamless integration with backend infrastructure via MQTT.
+**Project Goal:** To provide a robust, scalable, and maintainable Meshtastic plugin for deploying and managing distributed IoT networks essential for smart city services. ASCS facilitates reliable data collection from sensors, efficient routing through the mesh, and seamless integration with backend infrastructure via MQTT.
 
 This plugin is designed as a foundational component for critical city services, emphasizing reliability, security, and clear operational procedures.
 
