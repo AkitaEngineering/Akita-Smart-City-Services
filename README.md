@@ -4,7 +4,6 @@
 
 This plugin is designed as a foundational component for critical city services, emphasizing reliability, security, and clear operational procedures.
 
-**[Project Status: Development / Beta / Stable]** 
 
 ---
 
