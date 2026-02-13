@@ -1,4 +1,4 @@
-#ifndef AKITASMARTCITYSERVICES_H
+﻿#ifndef AKITASMARTCITYSERVICES_H
 #define AKITASMARTCITYSERVICES_H
 
 #include "meshtastic.h"      // Main Meshtastic library
@@ -7,6 +7,7 @@
 #include "generated_proto/SmartCity.pb.h" // Generated header from SmartCity.proto
 #include "interfaces/SensorInterface.h" // Abstract sensor interface
 #include "ASCSConfig.h"      // Include the new config manager header
+#include <Arduino.h>
 
 // Standard C++/System Libraries
 #include <vector>
@@ -46,7 +47,7 @@ public:
     // --- Meshtastic Plugin API Methods ---
     virtual void init(const MeshtasticAPI *api) override;
     virtual void loop() override;
-    virtual bool handleReceived(const meshPacket &packet) override;
+    virtual bool handleReceived(const meshPacket *packet) override;
 
     // --- Public Configuration ---
     void setSensor(std::unique_ptr<SensorInterface> sensor);
@@ -73,7 +74,7 @@ private:
 
     // Message Sending
     void sendServiceDiscovery(uint32_t toNode = ASCS_BROADCAST_ADDR);
-    void sendSensorData(const SensorData &sensorData, std::map<std::string, float>& readingsMap); 
+    void sendSensorData(const SensorData &sensorData, std::map<std::string, float>& readingsMap, const std::string &sensorId = std::string()); 
     bool sendMessage(uint32_t toNode, const SmartCityPacket &packet);
 
     // Role-Specific Logic

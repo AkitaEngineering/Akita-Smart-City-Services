@@ -1,4 +1,4 @@
-#include <Meshtastic.h>
+﻿#include <Meshtastic.h>
 #include <Wire.h> // Often needed for board initialization even if no I2C sensor used
 
 // Include the ASCS Plugin header (adjust path if needed)

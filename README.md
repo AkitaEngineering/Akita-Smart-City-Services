@@ -67,10 +67,11 @@ This plugin is designed to be included in a PlatformIO project that builds the f
     * Copy the ASCS `src/` contents (or relevant `.h`/`.cpp` files like `AkitaSmartCityServices.h/.cpp`, `ASCSConfig.h/.cpp`, `interfaces/`) into your PlatformIO project's `src/` or `lib/ASCS/`.
     * Copy the `proto/` directory into your project.
 4.  **Generate Protobuf Code:**
-    * Run the Nanopb generator script on `proto/SmartCity.proto` using the `proto/SmartCity.options` file. This creates `SmartCity.pb.c` and `SmartCity.pb.h`.
+    * The protobuf files `SmartCity.pb.c` and `SmartCity.pb.h` are already generated in `src/generated_proto/` using Nanopb.
+    * If you need to regenerate them (e.g., after modifying `proto/SmartCity.proto`), run:
         ```bash
-        # Example (adjust paths)
-        python <path_to_nanopb>/nanopb_generator.py proto/SmartCity.proto --options-file=proto/SmartCity.options --output-dir=src/generated_proto
+        # Install dependencies: pip install nanopb, and protoc (Google Protocol Buffers compiler)
+        python -m nanopb.generator.nanopb_generator proto/SmartCity.proto --output-dir=src/generated_proto
         ```
     * Ensure the generated files are compiled by PlatformIO (usually automatic for `.c` files in `src`).
     * **Crucial:** The `.options` file links the C++ map callback functions. Ensure callbacks in `AkitaSmartCityServices.cpp` are correctly implemented.
@@ -133,7 +134,6 @@ ASCS nodes **must** be configured after flashing using the Meshtastic `Preferenc
       }
     }
     ```
-    *(**Note:** Correct population of the `readings` object requires passing decoded map data through the gateway's processing functions - requires minor refactoring noted in code comments).*
 
 *See [docs/packet_format.md](docs/packet_format.md) for more on data structures.*
 *Use the [tools/mqtt_test_subscriber.py](tools/mqtt_test_subscriber.py) script for testing.*

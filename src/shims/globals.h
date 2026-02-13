@@ -1,0 +1,7 @@
+﻿// Moved globals shim
+#ifndef GLOBALS_H
+#define GLOBALS_H
+
+#include <Arduino.h>
+
+#endif // GLOBALS_H

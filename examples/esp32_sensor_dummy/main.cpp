@@ -1,4 +1,4 @@
-#include <Meshtastic.h>
+﻿#include <Meshtastic.h>
 #include <SPI.h> // Include necessary hardware libraries for your sensor
 
 // Include the ASCS Plugin header

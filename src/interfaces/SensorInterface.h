@@ -1,4 +1,4 @@
-#ifndef SENSOR_INTERFACE_H
+﻿#ifndef SENSOR_INTERFACE_H
 #define SENSOR_INTERFACE_H
 
 #include "SmartCity.pb.h" // Include the generated header from SmartCity.proto

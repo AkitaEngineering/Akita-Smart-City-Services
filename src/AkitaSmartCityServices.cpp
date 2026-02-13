@@ -1,4 +1,4 @@
-#include "AkitaSmartCityServices.h"
+﻿#include "AkitaSmartCityServices.h"
 #include "meshtastic.h"
 #include "plugin_api.h"
 #include "pb_encode.h"
@@ -53,19 +53,14 @@ bool AkitaSmartCityServices::encode_map_callback(pb_ostream_t *stream, const pb_
 
     while (context->encode_successful && context->map_iterator != map_to_encode.end()) {
         struct Entry { pb_callback_t key; float value; };
-        pb_field_t entry_fields[] = {
-            PB_FIELD(1, STRING, REQUIRED, CALLBACK, 0, 0, 0),
-            PB_FIELD(2, FLOAT, REQUIRED, STATIC, OTHER, Entry, key, 0),
-            PB_LAST_FIELD
-        };
 
         Entry entry_data;
         entry_data.key.funcs.encode = pb_encode_string_helper;
-        // Use const_cast because Nanopb signature isn't const-correct, but we treat it as const
         entry_data.key.arg = const_cast<void*>(static_cast<const void*>(&(context->map_iterator->first)));
         entry_data.value = context->map_iterator->second;
 
-        if (!pb_encode_tag_for_field(stream, field) || !pb_encode_submessage(stream, entry_fields, &entry_data)) {
+        /* Use the generated message descriptor for the ReadingsEntry submessage */
+        if (!pb_encode_tag_for_field(stream, field) || !pb_encode_submessage(stream, SensorData_ReadingsEntry_fields, &entry_data)) {
             context->encode_successful = false;
             break;
         }
@@ -81,19 +76,14 @@ bool AkitaSmartCityServices::decode_map_callback(pb_istream_t *stream, const pb_
     if (!context || !context->map_ptr) return false;
 
     struct Entry { pb_callback_t key; float value; };
-    pb_field_t entry_fields[] = {
-        PB_FIELD(1, STRING, REQUIRED, CALLBACK, 0, 0, 0),
-        PB_FIELD(2, FLOAT, REQUIRED, STATIC, OTHER, Entry, key, 0),
-        PB_LAST_FIELD
-    };
-
     Entry entry_data;
     std::string current_key;
     entry_data.key.funcs.decode = pb_decode_string_helper;
     entry_data.key.arg = &current_key;
     entry_data.value = 0.0f;
 
-    if (!pb_decode(stream, entry_fields, &entry_data)) return false;
+    /* Use the generated message descriptor for decoding the ReadingsEntry */
+    if (!pb_decode(stream, SensorData_ReadingsEntry_fields, &entry_data)) return false;
     (*context->map_ptr)[current_key] = entry_data.value;
     return true;
 }
@@ -107,8 +97,10 @@ AkitaSmartCityServices::AkitaSmartCityServices(const char *name) : MeshtasticPlu
 }
 
 AkitaSmartCityServices::~AkitaSmartCityServices() {
+#ifdef ASCS_ROLE_GATEWAY
     delete m_mqttClient;
     delete m_wifiClient;
+#endif
     if (s_instance == this) s_instance = nullptr;
 }
 
@@ -170,11 +162,12 @@ void AkitaSmartCityServices::loop() {
     }
 }
 
-bool AkitaSmartCityServices::handleReceived(const meshPacket &packet) {
-    if (packet.decoded.portnum != ASCS_PORT_NUM) return false;
+bool AkitaSmartCityServices::handleReceived(const meshPacket *packet) {
+    if (!packet) return false;
+    if (packet->decoded.portnum != ASCS_PORT_NUM) return false;
 
     SmartCityPacket scp = SmartCityPacket_init_zero;
-    pb_istream_t stream = pb_istream_from_buffer(packet.decoded.payload, packet.decoded.payloadlen);
+    pb_istream_t stream = pb_istream_from_buffer(packet->decoded.payload, packet->decoded.payloadlen);
 
     // Prepare map for potential SensorData
     MapCallbackContext decode_context;
@@ -186,12 +179,12 @@ bool AkitaSmartCityServices::handleReceived(const meshPacket &packet) {
     if (pb_decode(&stream, SmartCityPacket_fields, &scp)) {
         switch (scp.which_payload) {
             case SmartCityPacket_discovery_tag:
-                handleServiceDiscovery(scp.payload.discovery, packet.from);
+                handleServiceDiscovery(scp.payload.discovery, packet->from);
                 break;
             case SmartCityPacket_sensor_data_tag:
                 // Pass the DECODED map to the handler
-                Log.printf(LOG_LEVEL_DEBUG, "[%s] Rx SensorData from 0x%x, %d readings\n", getName(), packet.from, decoded_readings.size());
-                handleSensorData(scp.payload.sensor_data, packet.from, &decoded_readings);
+                Log.printf(LOG_LEVEL_DEBUG, "[%s] Rx SensorData from 0x%x, %d readings\n", getName(), packet->from, decoded_readings.size());
+                handleSensorData(scp.payload.sensor_data, packet->from, &decoded_readings);
                 break;
             default: break;
         }
@@ -237,10 +230,11 @@ void AkitaSmartCityServices::runSensorLogic() {
     std::map<std::string, float> readingsMap;
     if (m_sensor->readData(readingsMap)) {
         SensorData data = SensorData_init_zero;
-        strncpy(data.sensor_id, m_sensor->getSensorId().c_str(), sizeof(data.sensor_id) - 1);
+        // sensor_id is a nanopb callback field; defer attaching the actual string
+        // when encoding to ensure the string remains in scope.
         data.timestamp_utc = m_api->getAdjustedTime();
         data.sequence_num = ++m_sensorSequenceNum;
-        sendSensorData(data, readingsMap);
+        sendSensorData(data, readingsMap, m_sensor->getSensorId());
     }
 }
 
@@ -258,19 +252,29 @@ void AkitaSmartCityServices::runGatewayLogic(const SensorData &sensorData, uint3
 
 // --- Sending ---
 
-void AkitaSmartCityServices::sendSensorData(const SensorData &sensorData, std::map<std::string, float>& readingsMap) {
+void AkitaSmartCityServices::sendSensorData(const SensorData &sensorData, std::map<std::string, float>& readingsMap, const std::string &sensorId) {
     uint32_t target = m_config.getTargetNodeId();
     if (target == 0) target = findGatewayNode();
     if (target == 0) target = ASCS_BROADCAST_ADDR;
 
-    SmartCityPacket packet = SmartCityPacket_init_zero;
+     SmartCityPacket packet = SmartCityPacket_init_zero;
     packet.which_payload = SmartCityPacket_sensor_data_tag;
     packet.payload.sensor_data = sensorData;
 
+     /* If sensorData.sensor_id is callback-based we need a live string
+         for the callback to reference while encoding; callers may pass
+         sensorId via the new optional parameter. */
+    std::string local_sensor_id = sensorId;
+
+    if (!local_sensor_id.empty()) {
+        packet.payload.sensor_data.sensor_id.funcs.encode = pb_encode_string_helper;
+        packet.payload.sensor_data.sensor_id.arg = &local_sensor_id;
+    }
+
     MapCallbackContext encode_context;
-    encode_context.map_ptr = &readingsMap;
-    packet.payload.sensor_data.readings.funcs.encode = encode_map_callback;
-    packet.payload.sensor_data.readings.arg = &encode_context;
+     encode_context.map_ptr = &readingsMap;
+     packet.payload.sensor_data.readings.funcs.encode = encode_map_callback;
+     packet.payload.sensor_data.readings.arg = &encode_context;
 
     sendMessage(target, packet);
 }
@@ -463,8 +467,24 @@ void AkitaSmartCityServices::setSensor(std::unique_ptr<SensorInterface> sensor) 
 ServiceDiscovery_Role AkitaSmartCityServices::getNodeRole() const { return m_config.getNodeRole(); }
 void AkitaSmartCityServices::handleServiceDiscovery(const ServiceDiscovery &discovery, uint32_t fromNode) { updateServiceTable(fromNode, discovery.node_role, discovery.service_id); }
 void AkitaSmartCityServices::updateServiceTable(uint32_t nodeId, ServiceDiscovery_Role role, uint32_t serviceId) { if(nodeId != m_api->getMyNodeInfo()->node_num) m_serviceTable[nodeId] = {role, serviceId, millis()}; }
-void AkitaSmartCityServices::cleanupServiceTable() { /* Implementation same as before */ }
-uint32_t AkitaSmartCityServices::findGatewayNode() { /* Implementation same as before */ return 0; }
+void AkitaSmartCityServices::cleanupServiceTable() {
+    unsigned long now = millis();
+    for (auto it = m_serviceTable.begin(); it != m_serviceTable.end(); ) {
+        if (now - it->second.lastSeen > m_config.getServiceTimeoutMs()) {
+            it = m_serviceTable.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+uint32_t AkitaSmartCityServices::findGatewayNode() {
+    for (const auto& entry : m_serviceTable) {
+        if (entry.second.role == ServiceDiscovery_Role_GATEWAY) {
+            return entry.first;
+        }
+    }
+    return 0; // No gateway found
+}
 void AkitaSmartCityServices::sendServiceDiscovery(uint32_t to) { 
     SmartCityPacket p = SmartCityPacket_init_zero; 
     p.which_payload = SmartCityPacket_discovery_tag; 
@@ -472,7 +492,83 @@ void AkitaSmartCityServices::sendServiceDiscovery(uint32_t to) {
     p.payload.discovery.service_id = m_config.getServiceId();
     sendMessage(to, p); 
 }
-#ifndef ASCS_ROLE_GATEWAY
+#ifdef ASCS_ROLE_GATEWAY
+void AkitaSmartCityServices::connectWiFi() {
+    if (!m_wifiClient) return;
+    const std::string ssid = m_config.getWifiSsid();
+    const std::string pass = m_config.getWifiPassword();
+    if (WiFi.status() != WL_CONNECTED) {
+        Log.printf(LOG_LEVEL_INFO, "[%s] Connecting to WiFi SSID='%s'...\n", getName(), ssid.c_str());
+        WiFi.begin(ssid.c_str(), pass.c_str());
+        m_lastMqttReconnectAttempt = millis();
+    }
+}
+
+void AkitaSmartCityServices::checkWiFiConnection() {
+    if (WiFi.status() == WL_CONNECTED) return;
+    unsigned long now = millis();
+    // Try to reconnect every mqtt reconnect interval (configurable)
+    if (now - m_lastMqttReconnectAttempt >= m_config.getMqttReconnectIntervalMs()) {
+        m_lastMqttReconnectAttempt = now;
+        Log.printf(LOG_LEVEL_INFO, "[%s] WiFi disconnected, attempting reconnect...\n", getName());
+        WiFi.disconnect();
+        WiFi.begin(m_config.getWifiSsid().c_str(), m_config.getWifiPassword().c_str());
+    }
+}
+
+void AkitaSmartCityServices::connectMQTT() {
+    if (!m_mqttClient) return;
+    if (m_mqttClient->connected()) return;
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Log.println(LOG_LEVEL_DEBUG, "[ASCS] Skipping MQTT connect: WiFi not connected");
+        return;
+    }
+
+    char clientId[48];
+    uint32_t svc = m_config.getServiceId();
+    snprintf(clientId, sizeof(clientId), "ascs_gw_%lu", (unsigned long)svc);
+
+    Log.printf(LOG_LEVEL_INFO, "[%s] Connecting to MQTT broker %s:%d as %s\n", getName(), m_config.getMqttServer().c_str(), m_config.getMqttPort(), clientId);
+
+    bool ok;
+    const std::string user = m_config.getMqttUser();
+    const std::string pass = m_config.getMqttPassword();
+
+    if (user.empty()) {
+        ok = m_mqttClient->connect(clientId);
+    } else {
+        ok = m_mqttClient->connect(clientId, user.c_str(), pass.c_str());
+    }
+
+    if (ok) {
+        Log.printf(LOG_LEVEL_INFO, "[%s] MQTT connected.\n", getName());
+    } else {
+        Log.printf(LOG_LEVEL_WARNING, "[%s] MQTT connect failed\n", getName());
+    }
+}
+
+void AkitaSmartCityServices::checkMQTTConnection() {
+    if (!m_mqttClient) return;
+    if (m_mqttClient->connected()) return;
+
+    unsigned long now = millis();
+    if (now - m_lastMqttReconnectAttempt >= m_config.getMqttReconnectIntervalMs()) {
+        m_lastMqttReconnectAttempt = now;
+        connectMQTT();
+    }
+}
+
+void AkitaSmartCityServices::mqttCallback(char *topic, byte *payload, unsigned int length) {
+    // Simple handler: forward to instance if available
+    if (!AkitaSmartCityServices::s_instance) return;
+    std::string t(topic ? topic : "");
+    std::string p;
+    if (payload && length > 0) p.assign(reinterpret_cast<char*>(payload), length);
+
+    Log.printf(LOG_LEVEL_INFO, "[%s] MQTT Msg on %s: %s\n", AkitaSmartCityServices::s_instance->getName(), t.c_str(), p.c_str());
+}
+#else
 void AkitaSmartCityServices::connectWiFi() {}
 void AkitaSmartCityServices::checkWiFiConnection() {}
 void AkitaSmartCityServices::connectMQTT() {}

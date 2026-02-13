@@ -9,7 +9,8 @@ This document outlines the necessary hardware, software, libraries, and infrastr
 * **Version Control:** Git (for cloning the repository and managing code versions).
 * **Nanopb Generator:**
     * Python 3.x installed.
-    * Nanopb Python package installed (`pip install nanopb`). Required to generate C code (`.pb.c`, `.pb.h`) from the `.proto` definition file (`SmartCity.proto`).
+    * Nanopb Python package installed (`pip install nanopb`).
+    * Google Protocol Buffers compiler (protoc) installed and available in PATH. Required to generate C code (`.pb.c`, `.pb.h`) from the `.proto` definition file (`SmartCity.proto`).
 
 ## II. Core Firmware Libraries (Managed via PlatformIO `lib_deps`)
 

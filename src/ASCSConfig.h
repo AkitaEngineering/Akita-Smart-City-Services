@@ -1,7 +1,7 @@
-#ifndef ASCS_CONFIG_H
+﻿#ifndef ASCS_CONFIG_H
 #define ASCS_CONFIG_H
 
-#include <Preferences.h>
+#include "Preferences.h"
 #include <string>
 #include "generated_proto/SmartCity.pb.h" // For ServiceDiscovery_Role enum
 

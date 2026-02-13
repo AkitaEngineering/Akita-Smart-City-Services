@@ -1,4 +1,4 @@
-#include "ASCSConfig.h"
+﻿#include "ASCSConfig.h"
 #include "plugin_api.h" // For Log definition
 
 ASCSConfig::ASCSConfig() {

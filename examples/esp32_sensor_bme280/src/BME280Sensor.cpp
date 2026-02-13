@@ -1,4 +1,4 @@
-#include "BME280Sensor.h"
+﻿#include "BME280Sensor.h"
 #include "plugin_api.h" // For Log definition
 
 // Constructor

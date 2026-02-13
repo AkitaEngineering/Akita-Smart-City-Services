@@ -1,4 +1,4 @@
-#ifndef BME280_SENSOR_H
+﻿#ifndef BME280_SENSOR_H
 #define BME280_SENSOR_H
 
 // Include the ASCS Sensor Interface definition
