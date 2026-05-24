@@ -1,4 +1,4 @@
-﻿#ifndef AKITASMARTCITYSERVICES_H
+#ifndef AKITASMARTCITYSERVICES_H
 #define AKITASMARTCITYSERVICES_H
 
 #include "meshtastic.h"      // Main Meshtastic library
@@ -69,8 +69,8 @@ private:
 
     // Packet Handling
     void handleServiceDiscovery(const ServiceDiscovery &discovery, uint32_t fromNode);
-    // Updated: Accepts optional map pointer
-    void handleSensorData(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap);
+    // Updated: Accepts optional map pointer and decoded sensor ID
+    void handleSensorData(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId = "");
 
     // Message Sending
     void sendServiceDiscovery(uint32_t toNode = ASCS_BROADCAST_ADDR);
@@ -80,8 +80,8 @@ private:
     // Role-Specific Logic
     void runSensorLogic();
     void runAggregatorLogic(const SmartCityPacket &packet, uint32_t fromNode);
-    // Updated: Accepts optional map pointer
-    void runGatewayLogic(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap);
+    // Updated: Accepts optional map pointer and decoded sensor ID
+    void runGatewayLogic(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId);
 
     // Service Discovery
     void updateServiceTable(uint32_t nodeId, ServiceDiscovery_Role role, uint32_t serviceId);
@@ -89,10 +89,10 @@ private:
     uint32_t findGatewayNode();
 
     // Gateway Buffering & MQTT
-    // Updated: Accepts map for JSON generation/re-encoding
-    void publishMqttOrBuffer(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap);
-    bool publishMqtt(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap);
-    void bufferPacket(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap);
+    // Updated: Accepts map for JSON generation/re-encoding and decoded sensor ID
+    void publishMqttOrBuffer(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId);
+    bool publishMqtt(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId);
+    void bufferPacket(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId);
     
     void processBufferedPackets();
     // Updated: Reads fromNode from buffer

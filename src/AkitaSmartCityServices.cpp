@@ -1,4 +1,4 @@
-﻿#include "AkitaSmartCityServices.h"
+#include "AkitaSmartCityServices.h"
 #include "meshtastic.h"
 #include "plugin_api.h"
 #include "pb_encode.h"
@@ -41,7 +41,7 @@ bool pb_decode_string_helper(pb_istream_t *stream, const pb_field_t *field, void
 
 bool AkitaSmartCityServices::encode_map_callback(pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
     MapCallbackContext* context = static_cast<MapCallbackContext*>(*arg);
-    if (!context || !context->map_ptr) return false;
+    if (!context || !context->map_ptr) return true; // Fix: return true to avoid failing whole message
 
     const std::map<std::string, float>& map_to_encode = *context->map_ptr;
 
@@ -169,6 +169,11 @@ bool AkitaSmartCityServices::handleReceived(const meshPacket *packet) {
     SmartCityPacket scp = SmartCityPacket_init_zero;
     pb_istream_t stream = pb_istream_from_buffer(packet->decoded.payload, packet->decoded.payloadlen);
 
+    // Prepare string for sensor_id
+    std::string decoded_sensor_id;
+    scp.payload.sensor_data.sensor_id.funcs.decode = pb_decode_string_helper;
+    scp.payload.sensor_data.sensor_id.arg = &decoded_sensor_id;
+
     // Prepare map for potential SensorData
     MapCallbackContext decode_context;
     std::map<std::string, float> decoded_readings;
@@ -182,9 +187,9 @@ bool AkitaSmartCityServices::handleReceived(const meshPacket *packet) {
                 handleServiceDiscovery(scp.payload.discovery, packet->from);
                 break;
             case SmartCityPacket_sensor_data_tag:
-                // Pass the DECODED map to the handler
+                // Pass the DECODED map and string to the handler
                 Log.printf(LOG_LEVEL_DEBUG, "[%s] Rx SensorData from 0x%x, %d readings\n", getName(), packet->from, decoded_readings.size());
-                handleSensorData(scp.payload.sensor_data, packet->from, &decoded_readings);
+                handleSensorData(scp.payload.sensor_data, packet->from, &decoded_readings, decoded_sensor_id);
                 break;
             default: break;
         }
@@ -195,7 +200,7 @@ bool AkitaSmartCityServices::handleReceived(const meshPacket *packet) {
 
 // --- Handlers ---
 
-void AkitaSmartCityServices::handleSensorData(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap) {
+void AkitaSmartCityServices::handleSensorData(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId) {
     // If we are Aggregator, we need to re-wrap and send. 
     // If Gateway, we use data + map.
     
@@ -208,6 +213,13 @@ void AkitaSmartCityServices::handleSensorData(const SensorData &sensorData, uint
             packet.which_payload = SmartCityPacket_sensor_data_tag;
             packet.payload.sensor_data = sensorData;
             
+            // Attach string callback for sensor_id
+            std::string local_sensor_id = decodedSensorId;
+            if (!local_sensor_id.empty()) {
+                packet.payload.sensor_data.sensor_id.funcs.encode = pb_encode_string_helper;
+                packet.payload.sensor_data.sensor_id.arg = &local_sensor_id;
+            }
+
             // We must re-attach callbacks if we are to re-encode the map
             MapCallbackContext encode_context;
             // Use const_cast to satisfy the struct, we won't modify it
@@ -219,7 +231,7 @@ void AkitaSmartCityServices::handleSensorData(const SensorData &sensorData, uint
             break;
         }
         case ServiceDiscovery_Role_GATEWAY:
-            runGatewayLogic(sensorData, fromNode, readingsMap);
+            runGatewayLogic(sensorData, fromNode, readingsMap, decodedSensorId);
             break;
         default: break;
     }
@@ -244,9 +256,9 @@ void AkitaSmartCityServices::runAggregatorLogic(const SmartCityPacket &packet, u
     if (target != 0) sendMessage(target, packet);
 }
 
-void AkitaSmartCityServices::runGatewayLogic(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap) {
+void AkitaSmartCityServices::runGatewayLogic(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId) {
     #ifdef ASCS_ROLE_GATEWAY
-    publishMqttOrBuffer(sensorData, fromNode, readingsMap);
+    publishMqttOrBuffer(sensorData, fromNode, readingsMap, decodedSensorId);
     #endif
 }
 
@@ -293,20 +305,20 @@ bool AkitaSmartCityServices::sendMessage(uint32_t toNode, const SmartCityPacket 
 // --- Gateway Logic ---
 
 #ifdef ASCS_ROLE_GATEWAY
-void AkitaSmartCityServices::publishMqttOrBuffer(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap) {
+void AkitaSmartCityServices::publishMqttOrBuffer(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId) {
     if (m_mqttClient && m_mqttClient->connected() && !m_gatewayBufferActive) {
-        if (!publishMqtt(sensorData, fromNode, readingsMap)) {
+        if (!publishMqtt(sensorData, fromNode, readingsMap, decodedSensorId)) {
             Log.println(LOG_LEVEL_WARNING, "[%s] Publish failed, buffering...", getName());
             m_gatewayBufferActive = true;
-            bufferPacket(sensorData, fromNode, readingsMap);
+            bufferPacket(sensorData, fromNode, readingsMap, decodedSensorId);
         }
     } else {
         if (!m_gatewayBufferActive) m_gatewayBufferActive = true;
-        bufferPacket(sensorData, fromNode, readingsMap);
+        bufferPacket(sensorData, fromNode, readingsMap, decodedSensorId);
     }
 }
 
-bool AkitaSmartCityServices::publishMqtt(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap) {
+bool AkitaSmartCityServices::publishMqtt(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId) {
     if (!m_mqttClient || !m_mqttClient->connected()) return false;
 
     // Estimate capacity: Base + Map Size
@@ -316,7 +328,7 @@ bool AkitaSmartCityServices::publishMqtt(const SensorData &sensorData, uint32_t 
 
     char nodeHex[9]; snprintf(nodeHex, sizeof(nodeHex), "%08lx", fromNode);
     doc["node_id"] = nodeHex;
-    doc["sensor_id"] = sensorData.sensor_id;
+    doc["sensor_id"] = decodedSensorId;
     doc["timestamp_utc"] = sensorData.timestamp_utc;
     doc["sequence_num"] = sensorData.sequence_num;
 
@@ -330,9 +342,9 @@ bool AkitaSmartCityServices::publishMqtt(const SensorData &sensorData, uint32_t 
     }
 
     std::string topic = m_config.getMqttBaseTopic() + "/sensor/" + std::to_string(m_config.getServiceId()) + "/" + nodeHex;
-    if (strlen(sensorData.sensor_id) > 0) {
+    if (decodedSensorId.length() > 0) {
         topic += "/";
-        topic += sensorData.sensor_id;
+        topic += decodedSensorId;
     }
 
     std::string payload;
@@ -340,7 +352,7 @@ bool AkitaSmartCityServices::publishMqtt(const SensorData &sensorData, uint32_t 
     return m_mqttClient->publish(topic.c_str(), payload.c_str(), false);
 }
 
-void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap) {
+void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId) {
     // We need to store FROM_NODE + PACKET_LEN + PACKET
     
     // 1. Re-encode the packet to bytes
@@ -348,6 +360,12 @@ void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t
     packet.which_payload = SmartCityPacket_sensor_data_tag;
     packet.payload.sensor_data = sensorData;
     
+    std::string local_sensor_id = decodedSensorId;
+    if (!local_sensor_id.empty()) {
+        packet.payload.sensor_data.sensor_id.funcs.encode = pb_encode_string_helper;
+        packet.payload.sensor_data.sensor_id.arg = &local_sensor_id;
+    }
+
     MapCallbackContext encode_context;
     // const_cast safe here as we only read
     encode_context.map_ptr = const_cast<std::map<std::string, float>*>(readingsMap);
@@ -440,6 +458,10 @@ void AkitaSmartCityServices::processBufferedPackets() {
         SmartCityPacket scp = SmartCityPacket_init_zero;
         pb_istream_t stream = pb_istream_from_buffer(buf, len);
         
+        std::string decoded_sensor_id;
+        scp.payload.sensor_data.sensor_id.funcs.decode = pb_decode_string_helper;
+        scp.payload.sensor_data.sensor_id.arg = &decoded_sensor_id;
+
         MapCallbackContext decode_context;
         std::map<std::string, float> decoded_readings;
         decode_context.map_ptr = &decoded_readings;
@@ -447,7 +469,7 @@ void AkitaSmartCityServices::processBufferedPackets() {
         scp.payload.sensor_data.readings.arg = &decode_context;
 
         if (pb_decode(&stream, SmartCityPacket_fields, &scp) && scp.which_payload == SmartCityPacket_sensor_data_tag) {
-            if (publishMqtt(scp.payload.sensor_data, fromNode, &decoded_readings)) {
+            if (publishMqtt(scp.payload.sensor_data, fromNode, &decoded_readings, decoded_sensor_id)) {
                 removePacketFromBuffer();
                 m_lastBufferProcessTime = millis(); // Reset timer to process next quickly
             }

@@ -11,6 +11,7 @@ This plugin is designed as a foundational component for critical city services, 
 
 * [Features](#features)
 * [Architecture Overview](#architecture-overview)
+* [Management Console (UI)](#management-console-ui)
 * [Requirements](#requirements)
 * [Installation & Setup (PlatformIO)](#installation--setup-platformio)
 * [Configuration](#configuration)
@@ -23,6 +24,12 @@ This plugin is designed as a foundational component for critical city services, 
 * [License](#license)
 
 ---
+
+## Management Console (UI)
+
+ASCS includes a Unified Operations Center frontend built with React and Vite. The `management-console/` directory contains a powerful web dashboard for tracking moving municipal fleets, registering static infrastructure, and executing Command & Control (C2) overrides over physical assets via MQTT. 
+
+*See [management-console/README.md](management-console/README.md) for setup instructions.*
 
 ## Features
 
@@ -167,8 +174,7 @@ ASCS nodes **must** be configured after flashing using the Meshtastic `Preferenc
 
 Contributions are welcome to improve ASCS for Akita's smart city needs! Focus areas include:
 
-* Implementing and testing Nanopb map callbacks thoroughly.
-* Refining Gateway buffering and MQTT publishing logic (passing map data).
+* Enhancing Gateway buffering and MQTT publishing logic.
 * Adding robust unit and integration tests (see [tests/README.md](tests/README.md)).
 * Developing more sophisticated Aggregator features.
 * Implementing remote configuration and downlink commands.

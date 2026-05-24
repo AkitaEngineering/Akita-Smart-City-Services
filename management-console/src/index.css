@@ -1,0 +1,248 @@
+:root {
+  --color-white: #ffffff;
+  --color-silver: #c0c0c0;
+  --color-dark-gray: #1a1a1a;
+  --color-black: #0d0d0d;
+  --color-emerald: #10b981;
+  --color-emerald-hover: #059669;
+  --color-danger: #ef4444;
+  
+  --bg-gradient: linear-gradient(135deg, var(--color-black) 0%, var(--color-dark-gray) 100%);
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-gradient);
+  color: var(--color-white);
+  min-height: 100vh;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+}
+
+.emerald-text { color: var(--color-emerald); }
+.silver-text { color: var(--color-silver); }
+.danger-text { color: var(--color-danger); }
+
+.app-container {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  padding: 2rem;
+  border-right: 1px solid var(--glass-border);
+  background: rgba(0,0,0,0.2);
+}
+
+.sidebar h1 {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+}
+
+.nav-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--color-silver);
+}
+
+.nav-item:hover, .nav-item.active {
+  background: var(--color-emerald);
+  color: var(--color-white);
+}
+
+.main-content {
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.header h2 {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+/* Metric Cards */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.metric-card {
+  padding: 1.5rem;
+  transition: transform 0.2s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--color-emerald);
+}
+
+.metric-card.alert {
+  border-color: var(--color-danger);
+  animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.metric-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--color-silver);
+}
+
+.metric-value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--color-white);
+}
+
+.metric-unit {
+  font-size: 1rem;
+  color: var(--color-emerald);
+  margin-left: 0.25rem;
+}
+
+/* Dashboard Layout */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+/* Map */
+.map-container {
+  height: 400px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: var(--color-dark-gray);
+}
+
+/* Alerts */
+.alerts-panel {
+  padding: 1.5rem;
+  height: 400px;
+  overflow-y: auto;
+}
+
+.alert-item {
+  padding: 1rem;
+  border-left: 4px solid var(--color-danger);
+  background: rgba(239, 68, 68, 0.1);
+  margin-bottom: 1rem;
+  border-radius: 0 8px 8px 0;
+}
+
+.alert-time {
+  font-size: 0.75rem;
+  color: var(--color-silver);
+  margin-bottom: 0.25rem;
+}
+
+.alert-message {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Node Table */
+.node-table-container {
+  width: 100%;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 1rem;
+  color: var(--color-silver);
+  border-bottom: 1px solid var(--glass-border);
+  font-weight: 500;
+}
+
+td {
+  padding: 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
+
+.badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.badge-gateway {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--color-emerald);
+  border: 1px solid var(--color-emerald);
+}
+
+.badge-sensor {
+  background: rgba(192, 192, 192, 0.2);
+  color: var(--color-silver);
+  border: 1px solid var(--color-silver);
+}
+
+/* Chart Container */
+.chart-container {
+  padding: 1.5rem;
+  height: 400px;
+  margin-top: 2rem;
+}
