@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "npm run test && npm run build",
-    "test": "vitest run",
+    "test": "vitest run --exclude rules-tests/firestore.rules.test.ts",
+    "test:rules": "vitest run rules-tests/firestore.rules.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "recharts": "^2.7.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.1.0",

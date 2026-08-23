@@ -19,11 +19,21 @@ bool isValidMqttBaseTopic(const std::string &topic) {
 }
 
 bool isValidMqttHost(const std::string &host) {
-    if (host.empty() || host.size() > 253) return false;
+    if (host.empty() || host.size() > 253 || host.front() == '.' || host.back() == '.') return false;
+    size_t labelLength = 0;
+    bool previousHyphen = false;
     for (const unsigned char character : host) {
-        if (std::isspace(character) || std::iscntrl(character) || character == '/' || character == '\\') return false;
+        if (character == '.') {
+            if (labelLength == 0 || previousHyphen) return false;
+            labelLength = 0;
+            previousHyphen = false;
+            continue;
+        }
+        if (!std::isalnum(character) && character != '-') return false;
+        if ((labelLength == 0 && character == '-') || ++labelLength > 63) return false;
+        previousHyphen = character == '-';
     }
-    return true;
+    return labelLength > 0 && !previousHyphen;
 }
 }
 
@@ -35,7 +45,7 @@ ASCSConfig::~ASCSConfig() {
 
 void ASCSConfig::load() {
     LOG_DEBUG("ASCSConfig: Loading configuration...");
-    if (!m_preferences.begin(ASCS_PREFERENCES_NAMESPACE, false)) { // read/write false initially
+    if (!m_preferences.begin(ASCS_PREFERENCES_NAMESPACE, true)) {
          LOG_ERROR("ASCSConfig: Failed to initialize Preferences!");
          m_nodeRole = ASCS_DEFAULT_ROLE;
          m_serviceId = ASCS_DEFAULT_SERVICE_ID;
@@ -58,6 +68,7 @@ void ASCSConfig::load() {
          return;
     }
 
+    const uint32_t schemaVersion = m_preferences.getUInt("schema_ver", 0);
     m_nodeRole = (ServiceDiscovery_Role)m_preferences.getUInt("role", ASCS_DEFAULT_ROLE);
     m_serviceId = m_preferences.getUInt("service_id", ASCS_DEFAULT_SERVICE_ID);
     m_targetNodeId = m_preferences.getUInt("target_node", ASCS_DEFAULT_TARGET_NODE);
@@ -90,8 +101,12 @@ void ASCSConfig::load() {
 
     m_valid = true;
     m_validationError.clear();
-    if (m_nodeRole < ServiceDiscovery_Role_SENSOR || m_nodeRole > ServiceDiscovery_Role_GATEWAY) {
+    if (schemaVersion != ASCS_CONFIG_SCHEMA_VERSION) {
+        m_valid = false; m_validationError = "configuration is missing or uses an unsupported schema version; reprovision this device";
+    } else if (m_nodeRole < ServiceDiscovery_Role_SENSOR || m_nodeRole > ServiceDiscovery_Role_GATEWAY) {
         m_valid = false; m_validationError = "role must be SENSOR, AGGREGATOR, or GATEWAY";
+    } else if (m_nodeRole != static_cast<ServiceDiscovery_Role>(ASCS_DEFAULT_ROLE)) {
+        m_valid = false; m_validationError = "provisioned role does not match this firmware image";
     } else if (m_serviceId == 0) {
         m_valid = false; m_validationError = "service_id must be non-zero";
     } else if (m_sensorReadIntervalMs < 1000 || m_discoveryIntervalMs < 1000) {

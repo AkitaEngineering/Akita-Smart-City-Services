@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Plus } from 'lucide-react';
-import { collection, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { booleanReading, numericReading } from './telemetry';
 import type { AssetRecord, TelemetryMessage } from './types';
@@ -57,7 +57,7 @@ export default function Infrastructure({ messages }: { messages: TelemetryMessag
     try {
       const assetRef = doc(db, 'assets', normalizedAssetId);
       if ((await getDoc(assetRef)).exists()) throw new Error('duplicate');
-      await setDoc(assetRef, { assetId: normalizedAssetId, type: assetType, latitude: lat, longitude: lng, createdAt: new Date().toISOString() });
+      await setDoc(assetRef, { assetId: normalizedAssetId, type: assetType, latitude: lat, longitude: lng, createdAt: serverTimestamp() });
       setAssetId(''); setLatitude(''); setLongitude(''); setShowForm(false);
     } catch (saveError) {
       setError(saveError instanceof Error && saveError.message === 'duplicate' ? 'An asset with this ID already exists.' : 'The asset could not be registered.');

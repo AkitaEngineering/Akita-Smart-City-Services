@@ -57,6 +57,23 @@ function parseDate(value: unknown, fallback: Date): Date {
   return fallback;
 }
 
+function parseStoredDate(value: unknown): Date | null {
+  const invalid = new Date(Number.NaN);
+  const parsed = parseDate(value, invalid);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function topicMatchesTelemetry(topic: string, message: TelemetryMessage): boolean {
+  const marker = '/sensor/';
+  const markerIndex = topic.lastIndexOf(marker);
+  if (markerIndex <= 0) return false;
+  const parts = topic.slice(markerIndex + marker.length).split('/');
+  if (parts.length !== 3 || !/^[1-9][0-9]{0,9}$/.test(parts[0])) return false;
+  const serviceId = Number(parts[0]);
+  return Number.isInteger(serviceId) && serviceId <= 0xFFFFFFFF &&
+    parts[1].toLowerCase() === message.node_id.toLowerCase() && parts[2] === message.sensor_id;
+}
+
 export function parseTelemetryPayload(topic: string, payload: unknown, receivedAt = new Date(), id = ''): TelemetryMessage | null {
   if (!isRecord(payload) || topic.length > 512) return null;
   const nodeId = boundedString(payload.node_id);
@@ -69,7 +86,9 @@ export function parseTelemetryPayload(topic: string, payload: unknown, receivedA
   if (payload.timestamp_utc !== undefined && timestamp === undefined) return null;
   if (payload.sequence_num !== undefined && sequence === undefined) return null;
   return {
-    id: id || `${nodeId}:${sensorId}:${sequence ?? timestamp ?? receivedAt.getTime()}`,
+    id: timestamp !== undefined && sequence !== undefined
+      ? `${nodeId.toLowerCase()}:${sensorId}:${timestamp}:${sequence}`
+      : id || `${nodeId.toLowerCase()}:${sensorId}:${receivedAt.getTime()}`,
     topic,
     node_id: nodeId,
     sensor_id: sensorId,
@@ -84,20 +103,31 @@ export function parseTelemetryPayload(topic: string, payload: unknown, receivedA
 export function parseMqttMessage(topic: string, bytes: Uint8Array, receivedAt = new Date()): TelemetryMessage | null {
   if (bytes.byteLength > 64 * 1024) return null;
   try {
-    const message = parseTelemetryPayload(topic, JSON.parse(new TextDecoder().decode(bytes)), receivedAt);
-    if (!message) return null;
-    const marker = '/sensor/';
-    const markerIndex = topic.lastIndexOf(marker);
-    if (markerIndex <= 0) return null;
-    const parts = topic.slice(markerIndex + marker.length).split('/');
-    if (parts.length !== 3 || !/^[1-9][0-9]{0,9}$/.test(parts[0])) return null;
-    const serviceId = Number(parts[0]);
-    if (!Number.isInteger(serviceId) || serviceId > 0xFFFFFFFF ||
-        parts[1].toLowerCase() !== message.node_id.toLowerCase() || parts[2] !== message.sensor_id) return null;
+    const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    if (!isRecord(value) || Object.keys(value).length !== 5 ||
+        !Object.keys(value).every((key) => ['node_id', 'sensor_id', 'timestamp_utc', 'sequence_num', 'readings'].includes(key))) return null;
+    const message = parseTelemetryPayload(topic, value, receivedAt);
+    if (!message || !message.timestamp_utc || !message.sequence_num ||
+        !topicMatchesTelemetry(topic, message)) return null;
     return message;
   } catch {
     return null;
   }
+}
+
+export function parseStoredTelemetry(payload: unknown, documentId: string, now = new Date()): TelemetryMessage | null {
+  if (!isRecord(payload) || typeof payload.topic !== 'string') return null;
+  const keys = Object.keys(payload);
+  if (keys.length !== 7 || !keys.every((key) => [
+    'topic', 'node_id', 'sensor_id', 'timestamp_utc', 'sequence_num', 'readings', 'receivedAt',
+  ].includes(key))) return null;
+  if (!isRecord(payload.receivedAt) || typeof payload.receivedAt.toDate !== 'function') return null;
+  const receivedAt = parseStoredDate(payload.receivedAt);
+  if (!receivedAt || receivedAt.getTime() > now.getTime() + 5 * 60 * 1000) return null;
+  const message = parseTelemetryPayload(payload.topic, payload, receivedAt, documentId);
+  if (!message || !message.timestamp_utc || !message.sequence_num ||
+      !topicMatchesTelemetry(payload.topic, message)) return null;
+  return message;
 }
 
 export function mergeTelemetry(current: TelemetryMessage[], incoming: TelemetryMessage[], maximum = 500): TelemetryMessage[] {

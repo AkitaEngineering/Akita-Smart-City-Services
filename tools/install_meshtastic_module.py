@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -29,12 +30,27 @@ def insert_once(text: str, anchor: str, block: str, *, after: bool) -> str:
     return text[:index] + ("\n" if after else "") + block + text[index:]
 
 
+def firmware_revision(firmware: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(firmware), "rev-parse", "--verify", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    revision = result.stdout.strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("firmware must be a Git checkout with a valid HEAD revision")
+    return revision
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("firmware", type=Path, help="Meshtastic firmware checkout")
     parser.add_argument("--base-env", required=True, help="Existing Meshtastic PlatformIO environment")
     parser.add_argument("--role", choices=("sensor", "aggregator", "gateway"), required=True)
     parser.add_argument("--sensor", choices=("bme280",), help="Concrete sensor driver for sensor role")
+    parser.add_argument("--allow-unpinned", action="store_true",
+                        help="allow an unsupported Meshtastic revision for development only")
     args = parser.parse_args()
 
     if args.role == "sensor" and args.sensor is None:
@@ -51,6 +67,17 @@ def main() -> int:
     platformio = firmware / "platformio.ini"
     if not modules_cpp.is_file() or not platformio.is_file():
         parser.error("firmware must be the root of a Meshtastic firmware checkout")
+    if not args.allow_unpinned:
+        expected_revision = (repository / "meshtastic.version").read_text(encoding="utf-8").strip()
+        try:
+            actual_revision = firmware_revision(firmware)
+        except RuntimeError as error:
+            parser.error(str(error))
+        if actual_revision != expected_revision:
+            parser.error(
+                f"Meshtastic revision {actual_revision} is unsupported; expected {expected_revision}. "
+                "Use --allow-unpinned only for development."
+            )
 
     source = modules_cpp.read_text(encoding="utf-8")
     source = insert_once(source, '#include "configuration.h"', INCLUDE_BLOCK, after=True)

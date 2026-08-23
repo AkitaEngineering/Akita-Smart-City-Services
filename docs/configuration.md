@@ -6,12 +6,13 @@ ASCS reads the ESP32 NVS namespace `ascs`. The official Meshtastic console does 
 2. Set role (`1` sensor, `2` aggregator, `3` gateway), unique nonzero service ID, intervals, and gateway secrets. Put the complete PEM root/intermediate CA chain in `ASCS_PROVISION_MQTT_CA_CERT` using concatenated C string literals.
 3. Change the PlatformIO board in `provisioning/esp32_nvs/platformio.ini` to the exact ESP32 target when it is not Heltec WiFi LoRa 32 V2.
 4. Run `pio run -d provisioning/esp32_nvs -t upload`, monitor at 115200 baud, and require the success message.
-5. Flash the ASCS Meshtastic image without an erase operation. A full flash erase also removes NVS and requires reprovisioning.
+5. Flash the ASCS Meshtastic image for the same role without an erase operation. A full flash erase also removes NVS and requires reprovisioning.
 
 The untracked `provisioning.h` contains secrets and must never be committed or archived with build logs.
 
 | NVS key | Constraint |
 | --- | --- |
+| `schema_ver` | written last by the provisioner after successful read-back; must match the firmware schema |
 | `role` | 1–3 |
 | `service_id` | nonzero |
 | `target_node` | uint32 mesh node, 0 for discovery |
@@ -20,9 +21,9 @@ The untracked `provisioning.h` contains secrets and must never be committed or a
 | `svc_tout` | greater than discovery interval |
 | `mqtt_rec_int` | at least 1000 ms |
 | `wifi_ssid`, `wifi_pass` | gateway network; at most 32/64 bytes |
-| `mqtt_srv`, `mqtt_port` | TLS broker hostname (at most 253 bytes, no whitespace or path separators) and port; default 8883 |
+| `mqtt_srv`, `mqtt_port` | DNS/IPv4 broker hostname with 1–63 character alphanumeric/hyphen labels (253 bytes total) and TLS port; default 8883 |
 | `mqtt_user`, `mqtt_pass` | required gateway credential; at most 256/4096 bytes |
 | `mqtt_topic` | concrete base topic up to 128 bytes with no wildcards, whitespace, empty levels, or leading/trailing slash; normally `akita/smartcity` |
 | `mqtt_ca` | required PEM trust anchor; at most 8192 bytes |
 
-Firmware validation is fail closed: invalid sensor hardware or gateway configuration prevents ASCS initialization. Use a strong private Meshtastic channel PSK and the correct legal radio region through supported Meshtastic configuration tools.
+Firmware opens this namespace read-only and validates it fail closed: incomplete or outdated provisioning, a role that differs from the installed image, invalid sensor hardware, or invalid gateway configuration prevents ASCS initialization. Re-run provisioning whenever the schema version changes. Use a strong private Meshtastic channel PSK and the correct legal radio region through supported Meshtastic configuration tools.

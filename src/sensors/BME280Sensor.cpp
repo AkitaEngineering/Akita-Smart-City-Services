@@ -30,8 +30,10 @@ bool ASCSBME280Sensor::readData(std::map<std::string, float> &readings) {
     const float temperature = m_sensor.readTemperature();
     const float humidity = m_sensor.readHumidity();
     const float pressure = m_sensor.readPressure();
-    if (!std::isfinite(temperature) || !std::isfinite(humidity) || !std::isfinite(pressure)) {
-        LOG_ERROR("BME280 returned a non-finite reading");
+    if (!std::isfinite(temperature) || !std::isfinite(humidity) || !std::isfinite(pressure) ||
+        temperature < -40.0f || temperature > 85.0f || humidity < 0.0f || humidity > 100.0f ||
+        pressure < 30000.0f || pressure > 110000.0f) {
+        LOG_ERROR("BME280 returned a non-finite or out-of-range reading");
         return false;
     }
     readings.clear();

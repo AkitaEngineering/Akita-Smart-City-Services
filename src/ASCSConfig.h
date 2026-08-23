@@ -34,6 +34,7 @@
 #define ASCS_DEFAULT_MQTT_CA_CERT ""
 
 #define ASCS_PREFERENCES_NAMESPACE "ascs"
+#define ASCS_CONFIG_SCHEMA_VERSION 1U
 
 class ASCSConfig {
 public:

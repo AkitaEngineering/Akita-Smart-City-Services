@@ -44,7 +44,7 @@ message SensorData {
   // Values are float, suitable for many sensor types. Use specific conventions (e.g., 1.0 for true/open).
   map<string, float> readings = 3;
 
-  // Optional: Sequence number from the sensor node to help detect missed packets on the receiver side.
+  // Nonzero sequence number from the sensor node to help detect missed packets on the receiver side.
   uint32 sequence_num = 4;
 
   // Mesh node that collected the reading. Aggregators preserve this identity when relaying.

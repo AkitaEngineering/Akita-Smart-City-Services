@@ -13,6 +13,9 @@ describe('command safety', () => {
     expect(() => buildCommandTopic('akita/smartcity', '../#')).toThrow();
     expect(() => createCommandEnvelope({ assetId: 'a1b2c3d4', action: 'bad/action', value: true }, 'operator', '00000000-0000-4000-8000-000000000000')).toThrow();
     expect(() => createCommandEnvelope({ assetId: 'a1b2c3d4', action: 'power', value: 'true' } as never, 'operator', '00000000-0000-4000-8000-000000000000')).toThrow();
+    expect(() => createCommandEnvelope({ assetId: 'A1B2C3D4', action: 'power', value: true }, 'operator', '00000000-0000-4000-8000-000000000000')).toThrow();
+    expect(() => createCommandEnvelope({ assetId: 'a1b2c3d4', action: 'power', value: 1_000_000_001 }, 'operator', '00000000-0000-4000-8000-000000000000')).toThrow();
+    expect(() => createCommandEnvelope({ assetId: 'a1b2c3d4', action: 'power', value: true }, 'bad\nuid', '00000000-0000-4000-8000-000000000000')).toThrow();
   });
 
   it('validates execution acknowledgements', () => {

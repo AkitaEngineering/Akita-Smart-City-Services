@@ -34,13 +34,18 @@ class WiFiClientSecure;
 
 // Gateway Buffering Config
 #define ASCS_GATEWAY_BUFFER_FILENAME "/ascs_buffer.dat"
+#define ASCS_GATEWAY_BUFFER_TEMP_FILENAME "/ascs_buffer.tmp"
 #define ASCS_GATEWAY_BUFFER_MAX_SIZE (20 * 1024) // Increased to 20KB
 #define ASCS_GATEWAY_MAX_PACKET_SIZE 512 // Increased max packet size for maps
+#define ASCS_GATEWAY_BUFFER_MAGIC 0x41534353UL
+#define ASCS_GATEWAY_BUFFER_VERSION 1U
+#define ASCS_GATEWAY_BUFFER_HEADER_SIZE 16U
 #define ASCS_MAX_READINGS 64
 #define ASCS_MAX_READING_KEY_LENGTH 64
 #define ASCS_MQTT_BUFFER_SIZE 1024
 #define ASCS_MAX_PENDING_COMMANDS 32
-#define ASCS_PENDING_COMMAND_TTL_MS (2UL * 60UL * 1000UL)
+#define ASCS_PENDING_COMMAND_TTL_MS (75UL * 1000UL)
+#define ASCS_MAX_NUMERIC_COMMAND_VALUE 1000000000.0f
 
 // --- Nanopb Map Callback Struct ---
 struct MapCallbackContext {
@@ -125,6 +130,7 @@ private:
     void bufferPacket(const SensorData &sensorData, uint32_t fromNode, const std::map<std::string, float>* readingsMap, const std::string& decodedSensorId);
 
     void processBufferedPackets();
+    bool recoverBufferFile();
     // Updated: Reads fromNode from buffer
 #ifdef ASCS_ROLE_GATEWAY
     bool readPacketFromBuffer(fs::File &file, uint8_t* buffer, size_t &len, uint32_t &fromNode);

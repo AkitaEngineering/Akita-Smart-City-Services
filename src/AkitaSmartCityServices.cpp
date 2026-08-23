@@ -65,6 +65,14 @@ bool isSafeAction(const char *value) {
 }
 
 #ifdef ASCS_ROLE_GATEWAY
+bool isLowerHexNodeId(const std::string &value) {
+    if (value.size() != 8) return false;
+    for (const unsigned char character : value) {
+        if (!std::isdigit(character) && (character < 'a' || character > 'f')) return false;
+    }
+    return true;
+}
+
 bool isIsoUtcTimestamp(const char *value) {
     if (!value || strlen(value) != 24 || value[4] != '-' || value[7] != '-' || value[10] != 'T' ||
         value[13] != ':' || value[16] != ':' || value[19] != '.' || value[23] != 'Z') return false;
@@ -75,9 +83,15 @@ bool isIsoUtcTimestamp(const char *value) {
     const auto pair = [value](size_t position) {
         return static_cast<unsigned>((value[position] - '0') * 10 + (value[position + 1] - '0'));
     };
+    const unsigned year = static_cast<unsigned>((value[0] - '0') * 1000 + (value[1] - '0') * 100 +
+                                                (value[2] - '0') * 10 + (value[3] - '0'));
     const unsigned month = pair(5);
     const unsigned day = pair(8);
-    return month >= 1 && month <= 12 && day >= 1 && day <= 31 && pair(11) <= 23 && pair(14) <= 59 && pair(17) <= 59;
+    if (year == 0 || month < 1 || month > 12) return false;
+    constexpr unsigned daysByMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    unsigned daysInMonth = daysByMonth[month - 1];
+    if (month == 2 && (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)) daysInMonth = 29;
+    return day >= 1 && day <= daysInMonth && pair(11) <= 23 && pair(14) <= 59 && pair(17) <= 59;
 }
 
 bool isValidRequester(const char *value) {
@@ -88,6 +102,19 @@ bool isValidRequester(const char *value) {
         if (std::iscntrl(static_cast<unsigned char>(value[index]))) return false;
     }
     return true;
+}
+
+uint32_t bufferRecordCrc(uint32_t fromNode, const uint8_t *payload, size_t length) {
+    uint32_t crc = 0xFFFFFFFFUL;
+    const auto update = [&crc](uint8_t byte) {
+        crc ^= byte;
+        for (uint8_t bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xEDB88320UL & (0UL - (crc & 1UL)));
+    };
+    for (size_t index = 0; index < sizeof(fromNode); ++index) {
+        update(static_cast<uint8_t>((fromNode >> (index * 8)) & 0xFFU));
+    }
+    for (size_t index = 0; index < length; ++index) update(payload[index]);
+    return ~crc;
 }
 #endif
 }
@@ -221,6 +248,11 @@ void AkitaSmartCityServices::initialize() {
             m_fileSystemReady = FileSystem.begin(false);
             if (!m_fileSystemReady) LOG_ERROR("[%s] LittleFS mount failed; offline telemetry buffering is disabled.", getName());
             else {
+                if (!recoverBufferFile()) {
+                    LOG_ERROR("[%s] Interrupted telemetry queue recovery failed; offline buffering is disabled.", getName());
+                    m_fileSystemReady = false;
+                    return;
+                }
                 File queue = FileSystem.open(ASCS_GATEWAY_BUFFER_FILENAME, FILE_READ);
                 m_gatewayBufferActive = queue && queue.size() > 0;
                 if (queue) queue.close();
@@ -299,6 +331,7 @@ bool AkitaSmartCityServices::handlePayload(const uint8_t *payload, size_t payloa
                 break;
             case SmartCityPacket_sensor_data_tag:
                 if (!isSafeIdentifier(scp.payload.sensor_data.sensor_id, 64) || decoded_readings.empty() ||
+                    scp.payload.sensor_data.timestamp_utc == 0 || scp.payload.sensor_data.sequence_num == 0 ||
                     scp.payload.sensor_data.origin_node == 0 ||
                     !isTelemetryRouteAllowed(scp.payload.sensor_data.origin_node, fromNode)) return false;
                 LOG_DEBUG("[%s] Rx SensorData from 0x%x, %d readings\n", getName(), fromNode, decoded_readings.size());
@@ -353,12 +386,19 @@ void AkitaSmartCityServices::runSensorLogic() {
     if (!m_sensor) return;
     std::map<std::string, float> readingsMap;
     if (m_sensor->readData(readingsMap)) {
+        const uint32_t currentTime = getCurrentTime();
+        const uint32_t nodeNumber = getNodeNumber();
+        if (currentTime == 0 || nodeNumber == 0) {
+            LOG_WARN("[%s] Sensor reading withheld until node identity and trusted time are available.", getName());
+            return;
+        }
         SensorData data = SensorData_init_zero;
         // sensor_id is a nanopb callback field; defer attaching the actual string
         // when encoding to ensure the string remains in scope.
-        data.timestamp_utc = getCurrentTime();
-        data.sequence_num = ++m_sensorSequenceNum;
-        data.origin_node = getNodeNumber();
+        data.timestamp_utc = currentTime;
+        if (++m_sensorSequenceNum == 0) ++m_sensorSequenceNum;
+        data.sequence_num = m_sensorSequenceNum;
+        data.origin_node = nodeNumber;
         sendSensorData(data, readingsMap, m_sensor->getSensorId());
     }
 }
@@ -399,8 +439,9 @@ void AkitaSmartCityServices::handleControlCommand(const ControlCommand &command,
         sendControlAck(fromNode, command.command_id, ControlAck_Status_REJECTED, "Command value is missing");
         return;
     }
-    if (isNumeric && !std::isfinite(command.value.numeric_value)) {
-        sendControlAck(fromNode, command.command_id, ControlAck_Status_REJECTED, "Numeric command value is not finite");
+    if (isNumeric && (!std::isfinite(command.value.numeric_value) ||
+                      std::fabs(command.value.numeric_value) > ASCS_MAX_NUMERIC_COMMAND_VALUE)) {
+        sendControlAck(fromNode, command.command_id, ControlAck_Status_REJECTED, "Numeric command value is outside the safe protocol range");
         return;
     }
     std::string detail;
@@ -587,7 +628,7 @@ void AkitaSmartCityServices::handleMqttCommand(const char *topic, const uint8_t 
     if (receivedTopic.compare(0, prefix.size(), prefix) != 0 || receivedTopic.find('/', prefix.size()) != std::string::npos) return;
 
     const std::string assetId = receivedTopic.substr(prefix.size());
-    if (assetId.size() != 8) return;
+    if (!isLowerHexNodeId(assetId)) return;
     char *end = nullptr;
     const unsigned long target = strtoul(assetId.c_str(), &end, 16);
     if (!end || *end != '\0' || target == 0 || target > UINT32_MAX) return;
@@ -635,7 +676,7 @@ void AkitaSmartCityServices::handleMqttCommand(const char *topic, const uint8_t 
         packet.payload.control_command.value.bool_value = value.as<bool>();
     } else if (value.is<JsonFloat>() || value.is<JsonInteger>() || value.is<JsonUInt>()) {
         const float numeric = value.as<float>();
-        if (!std::isfinite(numeric)) return;
+        if (!std::isfinite(numeric) || std::fabs(numeric) > ASCS_MAX_NUMERIC_COMMAND_VALUE) return;
         packet.payload.control_command.which_value = ControlCommand_numeric_value_tag;
         packet.payload.control_command.value.numeric_value = numeric;
     } else {
@@ -663,7 +704,15 @@ void AkitaSmartCityServices::processPendingControlCommands() {
             publishControlAckMqtt(pending->second.acknowledgement, pending->second.targetNode)) {
             pending = m_pendingGatewayCommands.erase(pending);
         } else if (now - pending->second.sentAt > ASCS_PENDING_COMMAND_TTL_MS) {
-            pending = m_pendingGatewayCommands.erase(pending);
+            ControlAck timeout = ControlAck_init_zero;
+            snprintf(timeout.command_id, sizeof(timeout.command_id), "%s", pending->first.c_str());
+            timeout.status = ControlAck_Status_FAILED;
+            snprintf(timeout.detail, sizeof(timeout.detail), "%s", "Gateway timed out waiting for the target device");
+            if (publishControlAckMqtt(timeout, pending->second.targetNode)) {
+                pending = m_pendingGatewayCommands.erase(pending);
+            } else {
+                ++pending;
+            }
         } else {
             ++pending;
         }
@@ -695,7 +744,7 @@ void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t
         return;
     }
     const size_t pktLen = stream.bytes_written;
-    const size_t recordSize = sizeof(fromNode) + sizeof(uint16_t) + pktLen;
+    const size_t recordSize = ASCS_GATEWAY_BUFFER_HEADER_SIZE + pktLen;
     if (recordSize > ASCS_GATEWAY_BUFFER_MAX_SIZE) {
         LOG_ERROR("[%s] Encoded telemetry record exceeds the persistent queue capacity.", getName());
         return;
@@ -721,13 +770,21 @@ void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t
     }
 
     const uint16_t len16 = static_cast<uint16_t>(pktLen);
-    const bool written = file.write(reinterpret_cast<const uint8_t*>(&fromNode), sizeof(fromNode)) == sizeof(fromNode) &&
+    const uint32_t magic = ASCS_GATEWAY_BUFFER_MAGIC;
+    const uint16_t version = ASCS_GATEWAY_BUFFER_VERSION;
+    const uint32_t crc = bufferRecordCrc(fromNode, buffer, pktLen);
+    const bool written = file.write(reinterpret_cast<const uint8_t*>(&magic), sizeof(magic)) == sizeof(magic) &&
+                         file.write(reinterpret_cast<const uint8_t*>(&version), sizeof(version)) == sizeof(version) &&
                          file.write(reinterpret_cast<const uint8_t*>(&len16), sizeof(len16)) == sizeof(len16) &&
+                         file.write(reinterpret_cast<const uint8_t*>(&fromNode), sizeof(fromNode)) == sizeof(fromNode) &&
+                         file.write(reinterpret_cast<const uint8_t*>(&crc), sizeof(crc)) == sizeof(crc) &&
                          file.write(buffer, pktLen) == pktLen;
     file.flush();
     file.close();
     if (!written) {
         LOG_ERROR("[%s] Persistent telemetry queue write was incomplete.", getName());
+        FileSystem.remove(ASCS_GATEWAY_BUFFER_FILENAME);
+        m_gatewayBufferActive = false;
         return;
     }
 
@@ -735,16 +792,20 @@ void AkitaSmartCityServices::bufferPacket(const SensorData &sensorData, uint32_t
 }
 
 bool AkitaSmartCityServices::readPacketFromBuffer(fs::File &file, uint8_t* buffer, size_t &len, uint32_t &fromNode) {
-    if (file.available() < sizeof(uint32_t) + sizeof(uint16_t)) return false;
-
-    if (file.read(reinterpret_cast<uint8_t*>(&fromNode), sizeof(fromNode)) != sizeof(fromNode)) return false;
-
+    if (file.available() < ASCS_GATEWAY_BUFFER_HEADER_SIZE) return false;
+    uint32_t magic;
+    uint16_t version;
     uint16_t pktLen;
-    if (file.read(reinterpret_cast<uint8_t*>(&pktLen), sizeof(pktLen)) != sizeof(pktLen)) return false;
-
-    if (pktLen > ASCS_GATEWAY_MAX_PACKET_SIZE || file.available() < pktLen) return false;
-
+    uint32_t expectedCrc;
+    if (file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic)) != sizeof(magic) ||
+        file.read(reinterpret_cast<uint8_t*>(&version), sizeof(version)) != sizeof(version) ||
+        file.read(reinterpret_cast<uint8_t*>(&pktLen), sizeof(pktLen)) != sizeof(pktLen) ||
+        file.read(reinterpret_cast<uint8_t*>(&fromNode), sizeof(fromNode)) != sizeof(fromNode) ||
+        file.read(reinterpret_cast<uint8_t*>(&expectedCrc), sizeof(expectedCrc)) != sizeof(expectedCrc)) return false;
+    if (magic != ASCS_GATEWAY_BUFFER_MAGIC || version != ASCS_GATEWAY_BUFFER_VERSION || fromNode == 0 ||
+        pktLen == 0 || pktLen > ASCS_GATEWAY_MAX_PACKET_SIZE || file.available() < pktLen) return false;
     if (file.read(buffer, pktLen) != pktLen) return false;
+    if (bufferRecordCrc(fromNode, buffer, pktLen) != expectedCrc) return false;
     len = pktLen;
     return true;
 }
@@ -753,15 +814,24 @@ bool AkitaSmartCityServices::removePacketFromBuffer() {
     File r = FileSystem.open(ASCS_GATEWAY_BUFFER_FILENAME, FILE_READ);
     if (!r) return false;
 
-    // Read header to find size to skip
+    // Read the validated structural header to find the first record boundary.
+    uint32_t magic;
+    uint16_t version;
     uint32_t fromNode;
     uint16_t pktLen;
-    if (r.read((uint8_t*)&fromNode, 4) != 4 || r.read((uint8_t*)&pktLen, 2) != 2) {
+    uint32_t crc;
+    if (r.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic)) != sizeof(magic) ||
+        r.read(reinterpret_cast<uint8_t*>(&version), sizeof(version)) != sizeof(version) ||
+        r.read(reinterpret_cast<uint8_t*>(&pktLen), sizeof(pktLen)) != sizeof(pktLen) ||
+        r.read(reinterpret_cast<uint8_t*>(&fromNode), sizeof(fromNode)) != sizeof(fromNode) ||
+        r.read(reinterpret_cast<uint8_t*>(&crc), sizeof(crc)) != sizeof(crc) ||
+        magic != ASCS_GATEWAY_BUFFER_MAGIC || version != ASCS_GATEWAY_BUFFER_VERSION ||
+        fromNode == 0 || pktLen == 0 || pktLen > ASCS_GATEWAY_MAX_PACKET_SIZE) {
         r.close();
         return FileSystem.remove(ASCS_GATEWAY_BUFFER_FILENAME);
     }
 
-    size_t skip = 6 + pktLen;
+    size_t skip = ASCS_GATEWAY_BUFFER_HEADER_SIZE + pktLen;
     size_t total = r.size();
 
     if (skip >= total) {
@@ -769,13 +839,12 @@ bool AkitaSmartCityServices::removePacketFromBuffer() {
         return FileSystem.remove(ASCS_GATEWAY_BUFFER_FILENAME);
     }
 
-    static constexpr const char *temporaryFilename = "/ascs_buffer.tmp";
-    FileSystem.remove(temporaryFilename);
-    File w = FileSystem.open(temporaryFilename, FILE_WRITE);
+    FileSystem.remove(ASCS_GATEWAY_BUFFER_TEMP_FILENAME);
+    File w = FileSystem.open(ASCS_GATEWAY_BUFFER_TEMP_FILENAME, FILE_WRITE);
     if (!w || !r.seek(skip)) {
         if (w) w.close();
         r.close();
-        FileSystem.remove(temporaryFilename);
+        FileSystem.remove(ASCS_GATEWAY_BUFFER_TEMP_FILENAME);
         return false;
     }
 
@@ -785,7 +854,7 @@ bool AkitaSmartCityServices::removePacketFromBuffer() {
         if (n == 0 || w.write(buf, n) != n) {
             r.close();
             w.close();
-            FileSystem.remove(temporaryFilename);
+            FileSystem.remove(ASCS_GATEWAY_BUFFER_TEMP_FILENAME);
             return false;
         }
     }
@@ -793,14 +862,26 @@ bool AkitaSmartCityServices::removePacketFromBuffer() {
     r.close();
     w.close();
     if (!FileSystem.remove(ASCS_GATEWAY_BUFFER_FILENAME)) {
-        FileSystem.remove(temporaryFilename);
+        FileSystem.remove(ASCS_GATEWAY_BUFFER_TEMP_FILENAME);
         return false;
     }
-    if (!FileSystem.rename(temporaryFilename, ASCS_GATEWAY_BUFFER_FILENAME)) {
-        FileSystem.remove(temporaryFilename);
+    if (!FileSystem.rename(ASCS_GATEWAY_BUFFER_TEMP_FILENAME, ASCS_GATEWAY_BUFFER_FILENAME)) {
+        m_fileSystemReady = false;
         return false;
     }
     return true;
+}
+
+bool AkitaSmartCityServices::recoverBufferFile() {
+    File queue = FileSystem.open(ASCS_GATEWAY_BUFFER_FILENAME, FILE_READ);
+    const bool queueExists = static_cast<bool>(queue);
+    if (queue) queue.close();
+    File temporary = FileSystem.open(ASCS_GATEWAY_BUFFER_TEMP_FILENAME, FILE_READ);
+    const bool temporaryExists = static_cast<bool>(temporary);
+    if (temporary) temporary.close();
+    if (!temporaryExists) return true;
+    if (queueExists) return FileSystem.remove(ASCS_GATEWAY_BUFFER_TEMP_FILENAME);
+    return FileSystem.rename(ASCS_GATEWAY_BUFFER_TEMP_FILENAME, ASCS_GATEWAY_BUFFER_FILENAME);
 }
 
 void AkitaSmartCityServices::processBufferedPackets() {

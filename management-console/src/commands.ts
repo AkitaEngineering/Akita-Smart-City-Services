@@ -1,8 +1,9 @@
 import type { CommandRequest } from './types';
 
-const NODE_ID = /^[0-9A-Fa-f]{8}$/;
+const NODE_ID = /^[0-9a-f]{8}$/;
 const ACTION = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const UUID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$/;
+const MAX_NUMERIC_COMMAND = 1_000_000_000;
 
 export interface CommandEnvelope extends CommandRequest {
   commandId: string;
@@ -26,9 +27,12 @@ export function commandIdFromAcknowledgementTopic(baseTopic: string, topic: stri
 export function createCommandEnvelope(request: CommandRequest, requestedBy: string, commandId: string, now = new Date()): CommandEnvelope {
   if (!NODE_ID.test(request.assetId)) throw new Error('Controllable asset IDs must be eight-digit mesh node IDs');
   if (!ACTION.test(request.action)) throw new Error('Command action is invalid');
-  if (!requestedBy || !UUID.test(commandId)) throw new Error('Command identity is invalid');
-  if (typeof request.value !== 'boolean' && (typeof request.value !== 'number' || !Number.isFinite(request.value))) {
-    throw new Error('Command value must be a finite number or boolean');
+  if (!requestedBy || requestedBy.length > 128 || /[\u0000-\u001f\u007f]/.test(requestedBy) || !UUID.test(commandId)) {
+    throw new Error('Command identity is invalid');
+  }
+  if (typeof request.value !== 'boolean' && (typeof request.value !== 'number' || !Number.isFinite(request.value) ||
+      Math.abs(request.value) > MAX_NUMERIC_COMMAND)) {
+    throw new Error('Command value must be a bounded finite number or boolean');
   }
   return { ...request, commandId, requestedAt: now.toISOString(), expiresAtUtc: Math.floor(now.getTime() / 1000) + 60, requestedBy };
 }

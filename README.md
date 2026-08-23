@@ -32,9 +32,9 @@ cd ../firmware
 pio run -e ascs-tbeam-sensor
 ```
 
-The installer copies `src/`, registers the module behind `ASCS_OFFICIAL_FIRMWARE`, and retains one ASCS PlatformIO environment per selected board and role. Re-running it is idempotent. Update `meshtastic.version` and the matching CI checkout only after all role builds and hardware acceptance pass on a deliberate Meshtastic upgrade.
+The installer verifies the firmware checkout against `meshtastic.version`, copies `src/`, registers the module behind `ASCS_OFFICIAL_FIRMWARE`, and retains one ASCS PlatformIO environment per selected board and role. Re-running it is idempotent. `--allow-unpinned` exists only for deliberate development experiments. Update `meshtastic.version` and the matching CI checkout only after all role builds and hardware acceptance pass on a deliberate Meshtastic upgrade.
 
-Provision NVS before production firmware by following [configuration.md](docs/configuration.md). Do not erase flash when replacing the provisioning image with the production image.
+Provision NVS before production firmware by following [configuration.md](docs/configuration.md). Provisioning read-verifies every value and writes its schema marker last; production firmware rejects incomplete, obsolete, or role-mismatched configuration. Do not erase flash when replacing the provisioning image with the production image.
 
 ## Console checks and deployment
 

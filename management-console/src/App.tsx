@@ -7,7 +7,7 @@ import { collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, se
 import { auth, db } from './firebase';
 import { getRuntimeConfig } from './config';
 import { buildCommandTopic, commandIdFromAcknowledgementTopic, createCommandEnvelope, parseControlAcknowledgement, type ControlAcknowledgement } from './commands';
-import { mergeTelemetry, parseMqttMessage, parseTelemetryPayload } from './telemetry';
+import { mergeTelemetry, parseMqttMessage, parseStoredTelemetry } from './telemetry';
 import type { CommandRequest, ConnectionState, TelemetryMessage } from './types';
 import Login from './Login';
 
@@ -19,8 +19,9 @@ const Control = lazy(() => import('./Control'));
 
 const config = getRuntimeConfig();
 const AUTHORIZED_ROLES = new Set(['operator', 'admin']);
-const COMMAND_TIMEOUT_MS = 60_000;
-const MQTT_TOKEN_REFRESH_MS = 50 * 60_000;
+const COMMAND_TIMEOUT_MS = 90_000;
+const MQTT_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
+const MQTT_TOKEN_MINIMUM_REFRESH_MS = 60_000;
 
 interface PendingCommand {
   assetId: string;
@@ -74,6 +75,7 @@ function App() {
   const [messages, setMessages] = useState<TelemetryMessage[]>([]);
   const [connection, setConnection] = useState<ConnectionState>('disconnected');
   const [connectionError, setConnectionError] = useState('');
+  const [telemetryError, setTelemetryError] = useState('');
   const [mqttCredentialVersion, setMqttCredentialVersion] = useState(0);
   const mqttClient = useRef<MqttClient | null>(null);
   const pendingCommands = useRef(new Map<string, PendingCommand>());
@@ -118,14 +120,13 @@ function App() {
     if (!user) return undefined;
     const telemetryQuery = query(collection(db, 'telemetry'), orderBy('receivedAt', 'desc'), limit(500));
     return onSnapshot(telemetryQuery, (snapshot) => {
+      setTelemetryError('');
       const history = snapshot.docs.flatMap((snapshotDoc) => {
-        const data = snapshotDoc.data();
-        const topic = typeof data.topic === 'string' ? data.topic : `${config.mqttBaseTopic}/sensor/history`;
-        const parsed = parseTelemetryPayload(topic, data, new Date(), snapshotDoc.id);
+        const parsed = parseStoredTelemetry(snapshotDoc.data(), snapshotDoc.id);
         return parsed ? [parsed] : [];
       });
       setMessages((current) => mergeTelemetry(current, history));
-    }, () => setConnectionError('Historical telemetry is unavailable. Check Firestore access and indexes.'));
+    }, () => setTelemetryError('Historical telemetry is unavailable. Check Firestore access and indexes.'));
   }, [user]);
 
   useEffect(() => {
@@ -137,11 +138,18 @@ function App() {
     setConnectionError('');
     const connect = async () => {
       try {
-        const idToken = await user.getIdToken(mqttCredentialVersion > 0);
+        const tokenResult = await user.getIdTokenResult(mqttCredentialVersion > 0);
         if (disposed) return;
+        const role = typeof tokenResult.claims.role === 'string' ? tokenResult.claims.role : '';
+        if (!AUTHORIZED_ROLES.has(role)) {
+          setAuthError('Your operator authorization has expired or was revoked.');
+          setUser(null);
+          await signOut(auth).catch(() => undefined);
+          return;
+        }
         client = mqtt.connect(config.mqttUrl, {
           username: user.uid,
-          password: idToken,
+          password: tokenResult.token,
           clean: true,
           connectTimeout: 10_000,
           reconnectPeriod: 5_000,
@@ -164,9 +172,10 @@ function App() {
             }
           });
         });
-        client.on('reconnect', () => setConnection('connecting'));
-        client.on('offline', () => setConnection('disconnected'));
+        client.on('reconnect', () => { if (!disposed) setConnection('connecting'); });
+        client.on('offline', () => { if (!disposed) setConnection('disconnected'); });
         client.on('error', () => {
+          if (disposed) return;
           setConnection('error');
           setConnectionError('MQTT connection failed. Verify broker TLS and Firebase token authentication.');
         });
@@ -188,15 +197,22 @@ function App() {
           if (parsed) setMessages((current) => mergeTelemetry(current, [parsed]));
         });
 
+        const expirationTime = Date.parse(tokenResult.expirationTime);
+        const refreshDeadline = Number.isFinite(expirationTime)
+          ? expirationTime - MQTT_TOKEN_MINIMUM_REFRESH_MS
+          : Date.now() + 55 * 60_000;
         const refreshCredentials = () => {
           if (disposed) return;
-          if (pendingCommands.current.size > 0) {
+          if (pendingCommands.current.size > 0 && Date.now() + COMMAND_TIMEOUT_MS < refreshDeadline) {
             refreshTimer = setTimeout(refreshCredentials, COMMAND_TIMEOUT_MS);
           } else {
             setMqttCredentialVersion((version) => version + 1);
           }
         };
-        refreshTimer = setTimeout(refreshCredentials, MQTT_TOKEN_REFRESH_MS);
+        const refreshAt = Number.isFinite(expirationTime)
+          ? expirationTime - MQTT_TOKEN_REFRESH_MARGIN_MS
+          : Date.now() + 50 * 60_000;
+        refreshTimer = setTimeout(refreshCredentials, Math.max(MQTT_TOKEN_MINIMUM_REFRESH_MS, refreshAt - Date.now()));
       } catch {
         if (!disposed) {
           setConnection('error');
@@ -278,6 +294,7 @@ function App() {
             </div>
           </header>
           {connectionError && <div className="status-error" role="alert">{connectionError}</div>}
+          {telemetryError && <div className="status-error" role="alert">{telemetryError}</div>}
           <Suspense fallback={<div className="glass-panel empty-state">Loading console module…</div>}>
             <Routes>
               <Route path="/" element={<Dashboard messages={messages} />} />
