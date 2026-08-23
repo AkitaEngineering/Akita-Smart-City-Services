@@ -9,7 +9,8 @@ message SmartCityPacket {
   oneof payload {
     ServiceDiscovery discovery = 1; // For announcing/discovering node roles
     SensorData sensor_data = 2;     // For transmitting sensor readings
-    // ServiceConfig config = 3;    // Future placeholder for remote configuration
+    ControlCommand control_command = 3; // Authenticated operator command routed by a gateway
+    ControlAck control_ack = 4;         // Device execution result returned to a gateway
   }
 }
 
@@ -24,7 +25,7 @@ message ServiceDiscovery {
   }
   Role node_role = 1;       // The role this node is configured for.
   uint32 service_id = 2;    // Optional identifier for specific services/groups/locations.
-  // Add other capabilities if needed, e.g., supported sensor types, firmware version.
+  // Capabilities beyond role and service ID require a versioned schema update.
 }
 
 // Flexible sensor data structure. Sent by Sensor nodes, potentially relayed
@@ -45,13 +46,30 @@ message SensorData {
 
   // Optional: Sequence number from the sensor node to help detect missed packets on the receiver side.
   uint32 sequence_num = 4;
+
+  // Mesh node that collected the reading. Aggregators preserve this identity when relaying.
+  uint32 origin_node = 5;
 }
 
-// --- Placeholder for future remote configuration ---
-// message ServiceConfig {
-//   // Define config parameters here if implementing remote config
-//   // e.g., uint32 report_interval_ms = 1;
-//   // e.g., uint32 target_gateway_id = 2; // Node ID of preferred gateway
-//   // e.g., string mqtt_topic_override = 3;
-// }
+message ControlCommand {
+  string command_id = 1;
+  uint32 target_node = 2;
+  string asset_id = 3;
+  string action = 4;
+  oneof value {
+    bool bool_value = 5;
+    float numeric_value = 6;
+  }
+  uint32 expires_at_utc = 7;
+}
 
+message ControlAck {
+  enum Status {
+    REJECTED = 0;
+    EXECUTED = 1;
+    FAILED = 2;
+  }
+  string command_id = 1;
+  Status status = 2;
+  string detail = 3;
+}

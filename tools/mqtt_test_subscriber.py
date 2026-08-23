@@ -1,113 +1,112 @@
 #!/usr/bin/env python3
+"""TLS MQTT subscriber with ASCS telemetry validation."""
 
-"""
-Simple MQTT Test Subscriber for Akita Smart City Services (ASCS)
+from __future__ import annotations
 
-Subscribes to the ASCS MQTT topics and prints received messages.
-Helpful for verifying that Gateway nodes are publishing data correctly.
-"""
+import argparse
+import json
+import os
+import re
+import ssl
+import sys
+import math
+from typing import Any
 
 import paho.mqtt.client as mqtt
-import json
-import argparse
-import sys
-import os
-import time
 
-# --- Configuration ---
-DEFAULT_BROKER = "localhost"
-DEFAULT_PORT = 1883
-DEFAULT_BASE_TOPIC = "akita/smartcity" # Should match gateway's 'mqtt_topic' config
 
-# --- Argument Parsing ---
-parser = argparse.ArgumentParser(description="ASCS MQTT Test Subscriber")
-parser.add_argument("-b", "--broker", default=DEFAULT_BROKER, help=f"MQTT broker address (default: {DEFAULT_BROKER})")
-parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help=f"MQTT broker port (default: {DEFAULT_PORT})")
-parser.add_argument("-t", "--topic", default=DEFAULT_BASE_TOPIC, help=f"Base MQTT topic to subscribe to (default: {DEFAULT_BASE_TOPIC})")
-parser.add_argument("-u", "--username", default=None, help="MQTT username (optional)")
-parser.add_argument("-P", "--password", default=None, help="MQTT password (optional)")
-parser.add_argument("-v", "--verbose", action="store_true", help="Print verbose output")
+BASE_TOPIC = re.compile(r"^[^#+/]+(?:/[^#+/]+)*$")
+NODE_ID = re.compile(r"^[0-9A-Fa-f]{8}$")
+IDENTIFIER = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
-args = parser.parse_args()
 
-# --- MQTT Callback Functions ---
+def valid_telemetry(value: Any) -> bool:
+    if not isinstance(value, dict) or set(value) != {"node_id", "sensor_id", "timestamp_utc", "sequence_num", "readings"}:
+        return False
+    if not isinstance(value["node_id"], str) or not NODE_ID.fullmatch(value["node_id"]):
+        return False
+    if not isinstance(value["sensor_id"], str) or not IDENTIFIER.fullmatch(value["sensor_id"]):
+        return False
+    if (not isinstance(value["timestamp_utc"], int) or isinstance(value["timestamp_utc"], bool) or
+            not 0 <= value["timestamp_utc"] <= 0xFFFFFFFF):
+        return False
+    if (not isinstance(value["sequence_num"], int) or isinstance(value["sequence_num"], bool) or
+            not 0 <= value["sequence_num"] <= 0xFFFFFFFF):
+        return False
+    readings = value["readings"]
+    return isinstance(readings, dict) and 0 < len(readings) <= 64 and all(
+        isinstance(key, str) and IDENTIFIER.fullmatch(key) and
+        isinstance(reading, (int, float)) and not isinstance(reading, bool) and math.isfinite(reading)
+        for key, reading in readings.items()
+    )
 
-def on_connect(client, userdata, flags, rc):
-    """Callback when the client connects to the MQTT broker."""
-    if rc == 0:
-        print(f"Connected successfully to MQTT Broker: {args.broker}:{args.port}")
-        # Subscribe to the base topic and all subtopics (# wildcard)
-        subscribe_topic = f"{args.topic}/#"
-        client.subscribe(subscribe_topic)
-        print(f"Subscribed to topic: {subscribe_topic}")
-    else:
-        print(f"Connection failed with error code: {rc}")
-        # Specific error codes can be checked here (e.g., bad credentials, broker unavailable)
-        if rc == 5:
-            print("Authentication error. Check username/password.")
-        sys.exit(1) # Exit if connection fails
 
-def on_disconnect(client, userdata, rc):
-    """Callback when the client disconnects."""
-    print(f"Disconnected from MQTT Broker (rc: {rc}).")
-    if rc != 0:
-        print("Unexpected disconnection. Attempting to reconnect...")
-        # Basic reconnect logic (Paho library handles some reconnection automatically)
-        # For robust reconnect, more sophisticated logic might be needed
+def arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Subscribe to and validate ASCS MQTT telemetry")
+    parser.add_argument("--broker", required=True)
+    parser.add_argument("--port", type=int, default=8883)
+    parser.add_argument("--topic", default="akita/smartcity")
+    parser.add_argument("--username", required=True)
+    parser.add_argument("--ca-file")
+    result = parser.parse_args()
+    if not 1 <= result.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if not BASE_TOPIC.fullmatch(result.topic):
+        parser.error("--topic must be a concrete MQTT base topic")
+    if not os.environ.get("ASCS_MQTT_PASSWORD"):
+        parser.error("ASCS_MQTT_PASSWORD must be set in the environment")
+    return result
 
-def on_message(client, userdata, msg):
-    """Callback when a message is received."""
-    print("-" * 40)
-    print(f"Received message on topic: {msg.topic}")
-    try:
-        payload_str = msg.payload.decode("utf-8")
-        # Attempt to parse payload as JSON for pretty printing
+
+def main() -> int:
+    args = arguments()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.username_pw_set(args.username, os.environ["ASCS_MQTT_PASSWORD"])
+    context = ssl.create_default_context(cafile=args.ca_file)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    client.tls_set_context(context)
+
+    def on_connect(current: mqtt.Client, _userdata: Any, _flags: mqtt.ConnectFlags,
+                   reason_code: mqtt.ReasonCode, _properties: mqtt.Properties | None) -> None:
+        if reason_code.is_failure:
+            print(f"MQTT connection rejected: {reason_code}", file=sys.stderr)
+            current.disconnect()
+            return
+        topic = f"{args.topic}/sensor/#"
+        result, _message_id = current.subscribe(topic, qos=1)
+        if result != mqtt.MQTT_ERR_SUCCESS:
+            print(f"Subscription failed with code {result}", file=sys.stderr)
+            current.disconnect()
+        else:
+            print(f"Subscribed to {topic}")
+
+    def on_message(_client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage) -> None:
+        if len(message.payload) > 65536:
+            print(f"Rejected oversized payload on {message.topic}", file=sys.stderr)
+            return
         try:
-            payload_json = json.loads(payload_str)
-            print("Payload (JSON):")
-            print(json.dumps(payload_json, indent=2))
-        except json.JSONDecodeError:
-            print("Payload (Raw):")
-            print(payload_str)
+            decoded = json.loads(message.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            print(f"Rejected invalid JSON on {message.topic}: {error}", file=sys.stderr)
+            return
+        if not valid_telemetry(decoded):
+            print(f"Rejected invalid ASCS schema on {message.topic}", file=sys.stderr)
+            return
+        print(json.dumps({"topic": message.topic, "payload": decoded}, separators=(",", ":")))
 
-    except Exception as e:
-        print(f"Error processing message payload: {e}")
-        print(f"Raw payload bytes: {msg.payload}")
-    print("-" * 40)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
+    try:
+        client.connect(args.broker, args.port, keepalive=60)
+        client.loop_forever(retry_first_connection=False)
+    except (OSError, mqtt.MQTTException) as error:
+        print(f"MQTT client failed: {error}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        client.disconnect()
+    return 0
 
-# --- Main Execution ---
 
-# Create MQTT client instance
-client = mqtt.Client()
-
-# Assign callback functions
-client.on_connect = on_connect
-client.on_disconnect = on_disconnect
-client.on_message = on_message
-
-# Set username and password if provided
-if args.username:
-    client.username_pw_set(args.username, args.password)
-
-print(f"Attempting to connect to {args.broker}:{args.port}...")
-
-# Connect to the broker
-try:
-    client.connect(args.broker, args.port, 60) # 60-second keepalive
-except Exception as e:
-    print(f"Error connecting to MQTT broker: {e}")
-    sys.exit(1)
-
-# Start the MQTT network loop in a non-blocking way
-client.loop_start()
-
-# Keep the script running until interrupted
-try:
-    while True:
-        time.sleep(1) # Keep main thread alive
-except KeyboardInterrupt:
-    print("\nDisconnecting...")
-    client.loop_stop()
-    client.disconnect()
-    print("Exited.")
-
+if __name__ == "__main__":
+    raise SystemExit(main())

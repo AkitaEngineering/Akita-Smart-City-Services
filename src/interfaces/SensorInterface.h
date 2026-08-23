@@ -1,7 +1,7 @@
 ﻿#ifndef SENSOR_INTERFACE_H
 #define SENSOR_INTERFACE_H
 
-#include "SmartCity.pb.h" // Include the generated header from SmartCity.proto
+#include "../generated_proto/SmartCity.pb.h"
 #include <map>
 #include <string>
 
@@ -15,6 +15,8 @@
 class SensorInterface {
 public:
     virtual ~SensorInterface() = default; // Virtual destructor
+
+    virtual bool initialize() = 0;
 
     /**
      * @brief Reads data from the physical sensor(s).

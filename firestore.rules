@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOperator() {
+      return request.auth != null && request.auth.token.role in ['operator', 'admin'];
+    }
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.role == 'admin';
+    }
+
+    function validAsset(assetId) {
+      return request.resource.data.keys().hasOnly(['assetId', 'type', 'latitude', 'longitude', 'createdAt'])
+        && request.resource.data.assetId == assetId
+        && request.resource.data.assetId.matches('^[0-9a-f]{8}$')
+        && request.resource.data.type in ['Street Light', 'Park Monitor', 'Pool System', 'People Counter']
+        && request.resource.data.latitude is number
+        && request.resource.data.latitude >= -90
+        && request.resource.data.latitude <= 90
+        && request.resource.data.longitude is number
+        && request.resource.data.longitude >= -180
+        && request.resource.data.longitude <= 180
+        && request.resource.data.createdAt is string;
+    }
+
+    function validNewCommand(commandId) {
+      return request.resource.data.keys().hasOnly(['assetId', 'action', 'value', 'commandId', 'requestedAt', 'expiresAtUtc', 'requestedBy', 'status'])
+        && request.resource.data.commandId == commandId
+        && request.resource.data.commandId.matches('^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$')
+        && request.resource.data.assetId.matches('^[0-9a-f]{8}$')
+        && request.resource.data.action.matches('^[A-Za-z][A-Za-z0-9_-]{0,31}$')
+        && (request.resource.data.value is bool || request.resource.data.value is number)
+        && request.resource.data.requestedAt is timestamp
+        && request.resource.data.expiresAtUtc is int
+        && request.resource.data.expiresAtUtc > 0
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.status == 'pending';
+    }
+
+    match /telemetry/{messageId} {
+      allow read: if isOperator();
+      // The trusted MQTT-to-Firestore bridge uses the Admin SDK and bypasses rules.
+      allow write: if false;
+    }
+
+    match /assets/{assetId} {
+      allow read: if isOperator();
+      allow create: if isOperator() && validAsset(assetId);
+      allow update: if isAdmin() && validAsset(assetId)
+        && request.resource.data.assetId == resource.data.assetId
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isAdmin();
+    }
+
+    match /commands/{commandId} {
+      allow read: if isOperator();
+      allow create: if isOperator() && validNewCommand(commandId);
+      allow update: if isOperator()
+        && resource.data.requestedBy == request.auth.uid
+        && resource.data.status == 'pending'
+        && request.resource.data.requestedBy == resource.data.requestedBy
+        && request.resource.data.commandId == resource.data.commandId
+        && request.resource.data.status in ['executed', 'failed', 'rejected']
+        && request.resource.data.detail is string
+        && request.resource.data.detail.size() <= 96
+        && request.resource.data.completedAt is timestamp
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt', 'detail']);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

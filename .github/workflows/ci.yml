@@ -1,0 +1,72 @@
+name: Production checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r tools/requirements.txt
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python -m compileall -q tools tests
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ascs
+      - uses: actions/checkout@v4
+        with:
+          repository: meshtastic/firmware
+          ref: 34aa5e995b8d830c9bbe99d5c2d3d0975425df9a
+          path: firmware
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini', 'firmware/variants/**/*.ini', 'ascs/meshtastic.version') }}
+      - run: pip install platformio==6.1.19
+      - run: python ascs/tools/install_meshtastic_module.py firmware --base-env tbeam --role sensor --sensor bme280
+      - run: python ascs/tools/install_meshtastic_module.py firmware --base-env tbeam --role aggregator
+      - run: python ascs/tools/install_meshtastic_module.py firmware --base-env tbeam --role gateway
+      - run: pio run -d firmware -e ascs-tbeam-sensor -e ascs-tbeam-aggregator -e ascs-tbeam-gateway
+      - run: cp ascs/provisioning/esp32_nvs/include/provisioning.example.h ascs/provisioning/esp32_nvs/include/provisioning.h
+      - run: pio run -d ascs/provisioning/esp32_nvs
+
+  management-console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: management-console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: management-console/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_MQTT_BROKER_URL: wss://mqtt.example.invalid/ws
+          VITE_MQTT_BASE_TOPIC: akita/smartcity
+          VITE_FIREBASE_API_KEY: ci-api-key
+          VITE_FIREBASE_AUTH_DOMAIN: ci.example.invalid
+          VITE_FIREBASE_PROJECT_ID: ci-project
+          VITE_FIREBASE_STORAGE_BUCKET: ci.example.invalid
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "123456789"
+          VITE_FIREBASE_APP_ID: ci-app-id

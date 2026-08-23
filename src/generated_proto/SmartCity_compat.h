@@ -1,15 +1,44 @@
-﻿/* Compatibility shims for older C++ code expecting short enum names.
-   This file is generated/maintained by the project (not nanopb) so
-   it can be safely edited or removed without touching the generated
-   `SmartCity.pb.h` content produced by nanopb. */
-
 #ifndef SMARTCITY_COMPAT_H
 #define SMARTCITY_COMPAT_H
 
-/* Backwards-compatible enum names expected by C++ code */
+/* Stable C++ aliases kept separate from generated Nanopb output. */
 #define ServiceDiscovery_Role_UNKNOWN akita_smart_city_ServiceDiscovery_Role_UNKNOWN
 #define ServiceDiscovery_Role_SENSOR akita_smart_city_ServiceDiscovery_Role_SENSOR
 #define ServiceDiscovery_Role_AGGREGATOR akita_smart_city_ServiceDiscovery_Role_AGGREGATOR
 #define ServiceDiscovery_Role_GATEWAY akita_smart_city_ServiceDiscovery_Role_GATEWAY
 
-#endif // SMARTCITY_COMPAT_H
+#define ControlAck_Status_REJECTED akita_smart_city_ControlAck_Status_REJECTED
+#define ControlAck_Status_EXECUTED akita_smart_city_ControlAck_Status_EXECUTED
+#define ControlAck_Status_FAILED akita_smart_city_ControlAck_Status_FAILED
+
+#define SmartCityPacket_fields akita_smart_city_SmartCityPacket_fields
+#define ServiceDiscovery_fields akita_smart_city_ServiceDiscovery_fields
+#define SensorData_fields akita_smart_city_SensorData_fields
+#define SensorData_ReadingsEntry_fields akita_smart_city_SensorData_ReadingsEntry_fields
+#define ControlCommand_fields akita_smart_city_ControlCommand_fields
+#define ControlAck_fields akita_smart_city_ControlAck_fields
+
+#define SmartCityPacket_discovery_tag akita_smart_city_SmartCityPacket_discovery_tag
+#define SmartCityPacket_sensor_data_tag akita_smart_city_SmartCityPacket_sensor_data_tag
+#define SmartCityPacket_control_command_tag akita_smart_city_SmartCityPacket_control_command_tag
+#define SmartCityPacket_control_ack_tag akita_smart_city_SmartCityPacket_control_ack_tag
+#define ControlCommand_bool_value_tag akita_smart_city_ControlCommand_bool_value_tag
+#define ControlCommand_numeric_value_tag akita_smart_city_ControlCommand_numeric_value_tag
+
+#ifdef __cplusplus
+using SensorData = akita_smart_city_SensorData;
+using SmartCityPacket = akita_smart_city_SmartCityPacket;
+using ServiceDiscovery = akita_smart_city_ServiceDiscovery;
+using ServiceDiscovery_Role = akita_smart_city_ServiceDiscovery_Role;
+using ControlCommand = akita_smart_city_ControlCommand;
+using ControlAck = akita_smart_city_ControlAck;
+using ControlAck_Status = akita_smart_city_ControlAck_Status;
+
+#define SensorData_init_zero akita_smart_city_SensorData_init_zero
+#define SmartCityPacket_init_zero akita_smart_city_SmartCityPacket_init_zero
+#define ServiceDiscovery_init_zero akita_smart_city_ServiceDiscovery_init_zero
+#define ControlCommand_init_zero akita_smart_city_ControlCommand_init_zero
+#define ControlAck_init_zero akita_smart_city_ControlAck_init_zero
+#endif
+
+#endif

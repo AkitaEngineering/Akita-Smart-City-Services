@@ -1,4 +1,10 @@
 # Options file for SmartCity.proto
 
 # Link C++ callback functions to the 'readings' map field in SensorData
-SensorData.readings		callback_function: "true"
+akita_smart_city.SensorData.readings		callback_function: "true"
+akita_smart_city.SensorData.sensor_id		max_size:65
+akita_smart_city.ControlCommand.command_id	max_size:37
+akita_smart_city.ControlCommand.asset_id		max_size:65
+akita_smart_city.ControlCommand.action		max_size:33
+akita_smart_city.ControlAck.command_id		max_size:37
+akita_smart_city.ControlAck.detail		max_size:97

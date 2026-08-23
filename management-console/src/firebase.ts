@@ -2,13 +2,19 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
+function required(name: keyof ImportMetaEnv): string {
+  const value = import.meta.env[name]?.trim();
+  if (!value) throw new Error(`Missing required environment variable ${name}`);
+  return value;
+}
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: required('VITE_FIREBASE_API_KEY'),
+  authDomain: required('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: required('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: required('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: required('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: required('VITE_FIREBASE_APP_ID'),
 };
 
 const app = initializeApp(firebaseConfig);

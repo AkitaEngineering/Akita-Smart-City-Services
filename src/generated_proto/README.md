@@ -1,27 +1,12 @@
-# Generated Protocol Buffer Files
+# Generated Nanopb sources
 
-This directory contains the C/C++ source files generated from the SmartCity.proto definition using Nanopb.
+`SmartCity.pb.c` and `SmartCity.pb.h` are generated from `proto/SmartCity.proto` plus `proto/SmartCity.options` with Nanopb 0.4.9.1. `SmartCity_compat.h` contains stable aliases used by the C++ module.
 
-## Current Status
+Regenerate from the repository root in a clean Python environment:
 
-The files `SmartCity.pb.c` and `SmartCity.pb.h` have been generated and are ready for use.
-
-## Generation Process
-
-The files were generated using the Nanopb generator from the `proto/SmartCity.proto` file.
-
-### Prerequisites
-- Python 3.x
-- Nanopb package: `pip install nanopb`
-- Google Protocol Buffers compiler (protoc): Available from https://github.com/protocolbuffers/protobuf/releases
-
-### Generation Command
 ```bash
-python -m nanopb.generator.nanopb_generator proto/SmartCity.proto --output-dir=src/generated_proto
+python -m nanopb.generator.nanopb_generator \
+  -I proto -D src/generated_proto proto/SmartCity.proto
 ```
 
-### Files
-- `SmartCity.pb.h`: Header file with struct definitions and function declarations
-- `SmartCity.pb.c`: Implementation file with encoding/decoding functions
-
-**Note:** These files should be committed to the repository to ensure the project can be built without requiring protoc on every build system.
+Review the generated diff and run the official firmware compile gate whenever the schema, options, Nanopb, or generator changes.

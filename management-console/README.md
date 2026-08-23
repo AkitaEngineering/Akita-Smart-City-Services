@@ -1,46 +1,23 @@
-# ASCS Management Console (Unified Operations Center)
+# ASCS Management Console
 
-The ASCS Management Console is the frontend UI designed to monitor and manage the Akita Smart City Services network. It provides a Unified Operations Center experience, bridging real-world Meshtastic hardware telemetry with web-based Command & Control (C2).
+The console displays validated live MQTT telemetry plus up to 500 Firestore history records. Firebase Authentication requires an `operator` or `admin` custom claim. Infrastructure registration is persisted in Firestore. Commands are audited as pending, published with MQTT QoS 1, and are not reported as successful until the target node returns a matching execution acknowledgement.
 
-## Features
+```bash
+cp .env.example .env
+npm ci
+npm run check
+npm run dev
+```
 
-1. **Global Geospatial Map (God's Eye View):** Real-time mapping of all city assets.
-    - 🟢 **Environment Nodes** (Sensors)
-    - 🔴 **Anomalies** (Threshold breaches like high AQI)
-    - 🟡 **Fleet Ops** (Moving municipal vehicles)
-    - 🔵 **Infrastructure** (Static municipal assets)
-2. **Active Incidents Feed:** Auto-generates alerts for environmental hazards and node diagnostics (e.g., low battery, gateway offline).
-3. **Fleet Operations:** Live tracking of municipal fleets (Buses, Garbage Trucks, Snow Plows) with coordinate interpolation and speed metrics.
-4. **Command & Control (C2):** Two-way MQTT interfaces to remotely toggle physical infrastructure (Street lights, Pool Pumps) complete with safety confirmation dialogs.
-5. **Hardware Diagnostics:** Displays deep mesh telemetry including RSSI (Signal Strength) and battery voltage for deployed physical nodes.
+Required public configuration is listed in `.env.example`. Production builds require `wss://`. After login, the console uses the operator's short-lived Firebase ID token as the MQTT password and the Firebase UID as the MQTT username. Configure the broker to validate Firebase JWTs and apply the minimum topic ACL described in the root README. Never put a reusable broker password in a `VITE_*` variable: Vite variables are public bundle data. There is no simulator or production fallback data.
 
-## Technology Stack
+The Vite production build fails when any required setting is absent, the MQTT topic is unsafe, or the broker URL is not credential-free `wss://`.
 
-- **Framework:** React 18 (Vite)
-- **Language:** TypeScript
-- **Styling:** Custom CSS (Glassmorphism, Dark Theme)
-- **Mapping:** Leaflet & React-Leaflet
-- **Charting:** Recharts
-- **Icons:** Lucide-React
-- **Networking:** MQTT.js over WebSockets
+Deploy from the repository root after installing Firebase CLI and authenticating to the intended project:
 
-## Installation & Setup
+```bash
+firebase use <project-id>
+firebase deploy --only firestore:rules,hosting
+```
 
-1. Make sure you have Node.js and `npm` installed.
-2. Navigate to the `management-console` directory:
-   ```bash
-   cd management-console
-   ```
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
-4. Start the development server:
-   ```bash
-   npm run dev
-   ```
-5. Open your browser to the local Vite URL (typically `http://localhost:5173`).
-
-## Simulator Mode
-
-By default, the `App.tsx` file includes a robust MQTT simulator that mocks environmental data, interpolates fleet vehicle coordinates, and simulates static infrastructure. This allows for full UI testing even if the physical Meshtastic hardware gateway is offline.
+Before granting access, set the Firebase custom claim `role` to `operator` or `admin` using a trusted Admin SDK process. Never let a client assign its own role.

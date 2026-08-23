@@ -18,6 +18,12 @@ PB_BIND(akita_smart_city_SensorData, akita_smart_city_SensorData, AUTO)
 PB_BIND(akita_smart_city_SensorData_ReadingsEntry, akita_smart_city_SensorData_ReadingsEntry, AUTO)
 
 
+PB_BIND(akita_smart_city_ControlCommand, akita_smart_city_ControlCommand, AUTO)
+
+
+PB_BIND(akita_smart_city_ControlAck, akita_smart_city_ControlAck, AUTO)
+
+
 
 
 

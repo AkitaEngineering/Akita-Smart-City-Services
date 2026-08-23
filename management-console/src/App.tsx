@@ -1,16 +1,33 @@
-import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Server, Radio, Truck, Building2, SlidersHorizontal, LogOut } from 'lucide-react';
-import Dashboard from './Dashboard';
-import Nodes from './Nodes';
-import Fleet from './Fleet';
-import Infrastructure from './Infrastructure';
-import Control from './Control';
-import Login from './Login';
-import mqtt from 'mqtt';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Activity, Building2, LogOut, Radio, Server, SlidersHorizontal, Truck } from 'lucide-react';
+import mqtt, { type MqttClient } from 'mqtt';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { getRuntimeConfig } from './config';
+import { buildCommandTopic, commandIdFromAcknowledgementTopic, createCommandEnvelope, parseControlAcknowledgement, type ControlAcknowledgement } from './commands';
+import { mergeTelemetry, parseMqttMessage, parseTelemetryPayload } from './telemetry';
+import type { CommandRequest, ConnectionState, TelemetryMessage } from './types';
+import Login from './Login';
+
+const Dashboard = lazy(() => import('./Dashboard'));
+const Nodes = lazy(() => import('./Nodes'));
+const Fleet = lazy(() => import('./Fleet'));
+const Infrastructure = lazy(() => import('./Infrastructure'));
+const Control = lazy(() => import('./Control'));
+
+const config = getRuntimeConfig();
+const AUTHORIZED_ROLES = new Set(['operator', 'admin']);
+const COMMAND_TIMEOUT_MS = 60_000;
+const MQTT_TOKEN_REFRESH_MS = 50 * 60_000;
+
+interface PendingCommand {
+  assetId: string;
+  resolve: (acknowledgement: ControlAcknowledgement) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 function Sidebar() {
   const location = useLocation();
@@ -23,190 +40,255 @@ function Sidebar() {
   ];
 
   return (
-    <div className="sidebar glass-panel" style={{ borderRadius: 0, borderTop: 'none', borderBottom: 'none', borderLeft: 'none', display: 'flex', flexDirection: 'column' }}>
+    <aside className="sidebar glass-panel">
       <div>
         <h1>ASCS <span className="emerald-text">Unified Ops</span></h1>
-        <div className="nav-menu">
-          {menu.map(item => (
-            <Link to={item.path} key={item.name} style={{ textDecoration: 'none' }}>
-              <div className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}>
-                {item.icon}
-                {item.name}
-              </div>
+        <nav className="nav-menu" aria-label="Primary navigation">
+          {menu.map((item) => (
+            <Link to={item.path} key={item.name}>
+              <span className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}>
+                {item.icon}{item.name}
+              </span>
             </Link>
           ))}
-        </div>
+        </nav>
       </div>
-      <div style={{ marginTop: 'auto' }}>
-        <button 
-          onClick={() => signOut(auth)} 
-          style={{ width: '100%', padding: '0.75rem', background: 'transparent', border: '1px solid var(--color-silver)', color: 'var(--color-silver)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}
-        >
-          <LogOut size={16} /> Disconnect
-        </button>
-      </div>
-    </div>
+      <button className="secondary-button disconnect-button" onClick={() => void signOut(auth)}>
+        <LogOut size={16} /> Disconnect
+      </button>
+    </aside>
   );
 }
 
+function connectionLabel(state: ConnectionState): string {
+  if (state === 'connected') return 'MQTT Connected';
+  if (state === 'connecting') return 'MQTT Connecting';
+  if (state === 'error') return 'MQTT Error';
+  return 'MQTT Disconnected';
+}
+
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
-  const [, setMqttClient] = useState<mqtt.MqttClient | null>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [connected, setConnected] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [messages, setMessages] = useState<TelemetryMessage[]>([]);
+  const [connection, setConnection] = useState<ConnectionState>('disconnected');
+  const [connectionError, setConnectionError] = useState('');
+  const [mqttCredentialVersion, setMqttCredentialVersion] = useState(0);
+  const mqttClient = useRef<MqttClient | null>(null);
+  const pendingCommands = useRef(new Map<string, PendingCommand>());
 
-  // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setIsAuthenticated(!!user);
-      setIsLoadingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Telemetry & Simulator logic
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const brokerUrl = import.meta.env.VITE_MQTT_BROKER_URL || 'wss://test.mosquitto.org:8081';
-    const enableSimulator = import.meta.env.VITE_ENABLE_SIMULATOR === 'true';
-
-    // 1. Fetch historical data from Firestore (last 200 items)
-    const q = query(collection(db, 'telemetry'), orderBy('receivedAt', 'desc'), limit(200));
-    const unsubscribeFirestore = onSnapshot(q, (snapshot) => {
-        const history: any[] = [];
-        snapshot.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
-        // Reverse to get chronological order for charting
-        setMessages(history.reverse());
-    }, (error) => {
-        console.warn('Firestore fetch failed (likely due to mock config). Falling back to memory state.', error);
-    });
-
-    // 2. Connect to MQTT for Live Data
-    const client = mqtt.connect(brokerUrl);
-
-    client.on('connect', () => {
-      setConnected(true);
-      client.subscribe('akita/smartcity/#');
-      setMqttClient(client);
-    });
-
-    client.on('message', async (topic, payload) => {
+    let revision = 0;
+    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+      const currentRevision = ++revision;
+      setAuthError('');
+      if (!nextUser) {
+        setUser(null);
+        setAuthLoading(false);
+        return;
+      }
       try {
-        const data = JSON.parse(payload.toString());
-        const newMsg = { topic, ...data, receivedAt: new Date().toISOString() };
-        
-        // Write live data to Firestore (which will auto-update state via onSnapshot)
-        try {
-            await addDoc(collection(db, 'telemetry'), newMsg);
-        } catch (e) {
-            // If firestore fails (mock mode), just update local memory
-            setMessages(prev => [...prev.slice(-190), newMsg]);
+        const token = await nextUser.getIdTokenResult();
+        if (currentRevision !== revision) return;
+        const role = typeof token.claims.role === 'string' ? token.claims.role : '';
+        if (!AUTHORIZED_ROLES.has(role)) {
+          setAuthError('Your account is not assigned an ASCS operator role.');
+          setUser(null);
+          await signOut(auth);
+        } else {
+          setUser(nextUser);
         }
-      } catch (e) {
-        // ignore invalid
+      } catch {
+        if (currentRevision !== revision) return;
+        setAuthError('Unable to verify operator authorization.');
+        setUser(null);
+        await signOut(auth).catch(() => undefined);
+      } finally {
+        if (currentRevision === revision) setAuthLoading(false);
       }
     });
+    return () => {
+      ++revision;
+      unsubscribe();
+    };
+  }, []);
 
-    // 3. Simulator (Only run if enabled via .env)
-    let simInterval: any;
-    if (enableSimulator) {
-        const vehicles = [
-          { id: 'BUS-101', type: 'Bus', lat: 39.7180, lng: 140.1000, heading: 0.001 },
-          { id: 'TRK-GW1', type: 'Garbage Truck', lat: 39.7220, lng: 140.1050, heading: -0.001 },
-          { id: 'PLW-01', type: 'Snow Plow', lat: 39.7150, lng: 140.1080, heading: 0.0005 },
-          { id: 'CITY-V4', type: 'Municipal Vehicle', lat: 39.7250, lng: 140.0950, heading: -0.0008 }
-        ];
+  useEffect(() => {
+    if (!user) return undefined;
+    const telemetryQuery = query(collection(db, 'telemetry'), orderBy('receivedAt', 'desc'), limit(500));
+    return onSnapshot(telemetryQuery, (snapshot) => {
+      const history = snapshot.docs.flatMap((snapshotDoc) => {
+        const data = snapshotDoc.data();
+        const topic = typeof data.topic === 'string' ? data.topic : `${config.mqttBaseTopic}/sensor/history`;
+        const parsed = parseTelemetryPayload(topic, data, new Date(), snapshotDoc.id);
+        return parsed ? [parsed] : [];
+      });
+      setMessages((current) => mergeTelemetry(current, history));
+    }, () => setConnectionError('Historical telemetry is unavailable. Check Firestore access and indexes.'));
+  }, [user]);
 
-        const staticInfra = [
-          { id: 'SL-Downtown', type: 'Street Light', lat: 39.7205, lng: 140.1030, state: { on: true, brightness: 80 } },
-          { id: 'PRK-Central', type: 'Park Monitor', lat: 39.7190, lng: 140.1010, state: { people_count: 45, sprinklers: false } },
-          { id: 'POL-North', type: 'Pool System', lat: 39.7240, lng: 140.1060, state: { pump_active: true, temp_c: 26.5 } }
-        ];
+  useEffect(() => {
+    if (!user) return undefined;
+    let disposed = false;
+    let client: MqttClient | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    setConnection('connecting');
+    setConnectionError('');
+    const connect = async () => {
+      try {
+        const idToken = await user.getIdToken(mqttCredentialVersion > 0);
+        if (disposed) return;
+        client = mqtt.connect(config.mqttUrl, {
+          username: user.uid,
+          password: idToken,
+          clean: true,
+          connectTimeout: 10_000,
+          reconnectPeriod: 5_000,
+          resubscribe: true,
+        });
+        mqttClient.current = client;
 
-        simInterval = setInterval(() => {
-          const isAnomaly = Math.random() > 0.95;
-          const envData = {
-            node_id: "a1b2c3d4",
-            sensor_id: "Env-Downtown-01",
-            category: "Environment",
-            timestamp_utc: Math.floor(Date.now() / 1000),
-            readings: {
-              temperature_c: isAnomaly ? 38 + Math.random() * 5 : 20 + Math.random() * 5,
-              humidity_pct: 40 + Math.random() * 10,
-              pressure_pa: 101000 + Math.random() * 500,
-              aqi: isAnomaly ? 160 + Math.random() * 50 : 20 + Math.random() * 30,
-              noise_db: 55 + Math.random() * 20,
-              traffic_count: Math.floor(Math.random() * 15),
-              battery_v: 3.6 + Math.random() * 0.2,
-              rssi: -60 - Math.random() * 20,
-              latitude: 39.7200,
-              longitude: 140.1026
+        client.on('connect', () => {
+          client?.subscribe([
+            `${config.mqttBaseTopic}/sensor/#`,
+            `${config.mqttBaseTopic}/control/ack/#`,
+          ], { qos: 1 }, (error) => {
+            if (disposed) return;
+            if (error) {
+              setConnection('error');
+              setConnectionError('Connected to MQTT, but the scoped subscriptions failed.');
+            } else {
+              setConnection('connected');
+              setConnectionError('');
             }
-          };
-
-          vehicles.forEach(v => {
-            v.lat += v.heading;
-            v.lng += (Math.random() - 0.5) * 0.001;
-            if (v.lat > 39.73 || v.lat < 39.71) v.heading *= -1;
           });
+        });
+        client.on('reconnect', () => setConnection('connecting'));
+        client.on('offline', () => setConnection('disconnected'));
+        client.on('error', () => {
+          setConnection('error');
+          setConnectionError('MQTT connection failed. Verify broker TLS and Firebase token authentication.');
+        });
+        client.on('message', (topic, payload) => {
+          const topicCommandId = commandIdFromAcknowledgementTopic(config.mqttBaseTopic, topic);
+          if (topicCommandId) {
+            const acknowledgement = parseControlAcknowledgement(payload);
+            if (!acknowledgement || acknowledgement.commandId.toLowerCase() !== topicCommandId.toLowerCase()) return;
+            const pending = pendingCommands.current.get(acknowledgement.commandId);
+            if (pending && acknowledgement.nodeId.toLowerCase() === pending.assetId.toLowerCase()) {
+              clearTimeout(pending.timer);
+              pendingCommands.current.delete(acknowledgement.commandId);
+              pending.resolve(acknowledgement);
+            }
+            return;
+          }
+          if (!topic.startsWith(`${config.mqttBaseTopic}/sensor/`)) return;
+          const parsed = parseMqttMessage(topic, payload);
+          if (parsed) setMessages((current) => mergeTelemetry(current, [parsed]));
+        });
 
-          staticInfra.forEach(i => {
-            if (i.type === 'Park Monitor') (i.state as any).people_count = Math.max(0, (i.state as any).people_count + Math.floor((Math.random() - 0.5) * 5));
-          });
-
-          const allEmissions = [
-            { topic: 'akita/smartcity/sensor/env', ...envData },
-            ...vehicles.map(v => ({ topic: 'akita/smartcity/fleet/' + v.id, category: 'Fleet', node_id: v.id, sensor_id: v.type, readings: { latitude: v.lat, longitude: v.lng, speed_kmh: 30 + Math.random()*20 }})),
-            ...staticInfra.map(i => ({ topic: 'akita/smartcity/infra/' + i.id, category: 'Infrastructure', node_id: i.id, sensor_id: i.type, readings: { latitude: i.lat, longitude: i.lng, ...i.state }}))
-          ].map(e => ({ ...e, receivedAt: new Date().toISOString() }));
-
-          // For simulation, just push straight to local memory to avoid spamming the mock firestore project
-          setMessages(prev => [...prev.slice(-190), ...allEmissions]);
-        }, 2500);
-    }
+        const refreshCredentials = () => {
+          if (disposed) return;
+          if (pendingCommands.current.size > 0) {
+            refreshTimer = setTimeout(refreshCredentials, COMMAND_TIMEOUT_MS);
+          } else {
+            setMqttCredentialVersion((version) => version + 1);
+          }
+        };
+        refreshTimer = setTimeout(refreshCredentials, MQTT_TOKEN_REFRESH_MS);
+      } catch {
+        if (!disposed) {
+          setConnection('error');
+          setConnectionError('A Firebase identity token could not be obtained for MQTT authentication.');
+        }
+      }
+    };
+    void connect();
 
     return () => {
-      client.end();
-      if (simInterval) clearInterval(simInterval);
-      unsubscribeFirestore();
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      pendingCommands.current.forEach((pending) => {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('MQTT disconnected before device acknowledgement'));
+      });
+      pendingCommands.current.clear();
+      if (mqttClient.current === client) mqttClient.current = null;
+      client?.end(true);
+      setConnection('disconnected');
     };
-  }, [isAuthenticated]);
+  }, [user, mqttCredentialVersion]);
 
-  if (isLoadingAuth) return <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>Secure Connection Establishing...</div>;
-  if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
+  const publishCommand = useCallback(async (request: CommandRequest) => {
+    const client = mqttClient.current;
+    if (!user || !client?.connected) throw new Error('MQTT is not connected');
+    const commandId = crypto.randomUUID();
+    const envelope = createCommandEnvelope(request, user.uid, commandId);
+    const commandRef = doc(db, 'commands', commandId);
 
-  // Messages parsing for dates since Firestore/Simulator uses ISO string
-  const parsedMessages = messages.map(m => ({
-      ...m,
-      receivedAt: new Date(m.receivedAt)
-  }));
+    await setDoc(commandRef, { ...envelope, requestedAt: serverTimestamp(), status: 'pending' });
+    let acknowledgement: ControlAcknowledgement;
+    try {
+      const deviceAcknowledgement = new Promise<ControlAcknowledgement>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingCommands.current.delete(commandId);
+          reject(new Error('Timed out waiting for device acknowledgement'));
+        }, COMMAND_TIMEOUT_MS);
+        pendingCommands.current.set(commandId, { assetId: request.assetId, resolve, reject, timer });
+      });
+      await new Promise<void>((resolve, reject) => {
+        client.publish(buildCommandTopic(config.mqttBaseTopic, request.assetId), JSON.stringify(envelope), { qos: 1, retain: false }, (error) => {
+          if (error) reject(error); else resolve();
+        });
+      });
+      acknowledgement = await deviceAcknowledgement;
+    } catch (error) {
+      const pending = pendingCommands.current.get(commandId);
+      if (pending) clearTimeout(pending.timer);
+      pendingCommands.current.delete(commandId);
+      const detail = error instanceof Error ? error.message.slice(0, 96) : 'Command failed';
+      await updateDoc(commandRef, { status: 'failed', detail, completedAt: serverTimestamp() });
+      throw error;
+    }
+
+    const detail = acknowledgement.detail.slice(0, 96);
+    await updateDoc(commandRef, {
+      status: acknowledgement.status,
+      detail,
+      completedAt: serverTimestamp(),
+    });
+    if (acknowledgement.status !== 'executed') {
+      throw new Error(detail || `Device ${acknowledgement.status} the command`);
+    }
+  }, [user]);
+
+  if (authLoading) return <main className="centered-page">Secure connection establishing…</main>;
+  if (!user) return <Login authorizationError={authError} />;
 
   return (
     <BrowserRouter>
       <div className="app-container">
         <Sidebar />
-        <div className="main-content">
-          <div className="header">
-            <div>
-              <h2 className="emerald-text">Management Console</h2>
-              <p className="silver-text">Akita Smart City Services</p>
+        <main className="main-content">
+          <header className="header">
+            <div><h2 className="emerald-text">Management Console</h2><p className="silver-text">Akita Smart City Services</p></div>
+            <div className={`glass-panel connection-pill ${connection === 'connected' ? 'emerald-text' : 'silver-text'}`}>
+              <Radio size={16} />{connectionLabel(connection)}
             </div>
-            <div className={`glass-panel ${connected ? 'emerald-text' : 'silver-text'}`} style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Radio size={16} />
-              {connected ? 'MQTT Connected' : 'Connecting...'}
-            </div>
-          </div>
-          
-          <Routes>
-            <Route path="/" element={<Dashboard messages={parsedMessages} />} />
-            <Route path="/fleet" element={<Fleet messages={parsedMessages} />} />
-            <Route path="/infrastructure" element={<Infrastructure messages={parsedMessages} />} />
-            <Route path="/control" element={<Control />} />
-            <Route path="/nodes" element={<Nodes messages={parsedMessages} />} />
-          </Routes>
-        </div>
+          </header>
+          {connectionError && <div className="status-error" role="alert">{connectionError}</div>}
+          <Suspense fallback={<div className="glass-panel empty-state">Loading console module…</div>}>
+            <Routes>
+              <Route path="/" element={<Dashboard messages={messages} />} />
+              <Route path="/fleet" element={<Fleet messages={messages} />} />
+              <Route path="/infrastructure" element={<Infrastructure messages={messages} />} />
+              <Route path="/control" element={<Control messages={messages} connection={connection} publishCommand={publishCommand} />} />
+              <Route path="/nodes" element={<Nodes messages={messages} />} />
+              <Route path="*" element={<div className="glass-panel empty-state">The requested console page does not exist.</div>} />
+            </Routes>
+          </Suspense>
+        </main>
       </div>
     </BrowserRouter>
   );
